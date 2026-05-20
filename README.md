@@ -33,7 +33,7 @@ VAULT_PATH="/Users/skalas/Documents/Obsidian Vault" uv run brain-mcp
 
 Local-only semantic search via `sqlite-vec` + `fastembed` (`intfloat/multilingual-e5-large`, 1024-dim, multilingual ES/EN).
 
-- Vectors live in `<VAULT>/_system/vectors.db` (override with `BRAIN_VECTOR_DB`).
+- Vectors live in `<repo>/.vectors.db` (gitignored — per-machine, regenerated via `reindex_vectors(full=True)`). Override with `BRAIN_VECTOR_DB`.
 - Model defaults to `intfloat/multilingual-e5-large` (override with `BRAIN_EMBED_MODEL` / `BRAIN_EMBED_DIM`).
 - Chunking is per H2 section; a preamble chunk includes title/aliases/tags so frontmatter is searchable.
 - Writes (`append_section`, `create_note`, `create_dated`) automatically re-embed the affected note; only sections whose content hash changed are re-encoded.

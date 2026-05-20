@@ -5,3 +5,7 @@ __pycache__/
 dist/
 *.egg-info/
 .env
+
+# local vector index — per-machine, regenerated via reindex_vectors(full=True)
+.vectors.db
+.vectors.db-*

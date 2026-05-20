@@ -1,4 +1,4 @@
-"""Local vector search over the vault using sqlite-vec + fastembed (bge-m3)."""
+"""Local vector search over the vault using sqlite-vec + fastembed (multilingual-e5-large)."""
 from __future__ import annotations
 
 import hashlib
@@ -11,17 +11,17 @@ from functools import lru_cache
 from pathlib import Path
 
 from .vault import (
-    SYSTEM_DIR,
     Note,
     find_note_by_id,
     iter_notes,
 )
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 EMBED_MODEL = os.environ.get("BRAIN_EMBED_MODEL", "intfloat/multilingual-e5-large")
 EMBED_DIM = int(os.environ.get("BRAIN_EMBED_DIM", "1024"))
 # e5 models expect explicit "query:" / "passage:" prefixes; auto-applied when model name starts with "intfloat/".
 _E5_FAMILY = EMBED_MODEL.startswith("intfloat/")
-DB_PATH = Path(os.environ.get("BRAIN_VECTOR_DB", str(SYSTEM_DIR / "vectors.db")))
+DB_PATH = Path(os.environ.get("BRAIN_VECTOR_DB", str(REPO_ROOT / ".vectors.db")))
 MIN_CHUNK_CHARS = 40
 
 H2_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
