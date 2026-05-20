@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 brain-mcp = "brain_mcp.server:main"
+brain-reindex = "brain_mcp.cli:reindex"
 
 [build-system]
 requires = ["hatchling"]

@@ -39,6 +39,19 @@ Local-only semantic search via `sqlite-vec` + `fastembed` (`intfloat/multilingua
 - Writes (`append_section`, `create_note`, `create_dated`) automatically re-embed the affected note; only sections whose content hash changed are re-encoded.
 - First-run bootstrap: call `reindex_vectors()` once after install — walks the vault and embeds everything (a few minutes the first time; the model is cached locally afterward).
 
+### CLI
+
+```bash
+# Embed the vault only if the DB is empty (idempotent — safe to run anywhere).
+VAULT_PATH="…" uv run brain-reindex --bootstrap
+
+# Walk every note (and prune chunks for deleted notes).
+VAULT_PATH="…" uv run brain-reindex --full
+
+# Reindex a single note by id.
+VAULT_PATH="…" uv run brain-reindex --note kavak-pricing-q1
+```
+
 ## Guardrails
 
 - No delete tool. Deletion stays manual.
