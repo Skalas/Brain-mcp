@@ -41,7 +41,7 @@ def validate_date(s: str) -> None:
         raise VaultError(f"Date {s!r} must be YYYY-MM-DD.")
 
 
-def run_reindex() -> str:
+def run_reindex(note_id: str | None = None) -> str:
     if not REINDEX_SCRIPT.exists():
         raise VaultError(f"reindex script missing at {REINDEX_SCRIPT}")
     result = subprocess.run(
@@ -53,7 +53,16 @@ def run_reindex() -> str:
     )
     if result.returncode != 0:
         raise VaultError(f"reindex failed: {result.stderr}")
-    return result.stdout.strip()
+    stdout = result.stdout.strip()
+
+    if note_id:
+        try:
+            from . import vectors
+
+            vectors.reindex_note(note_id)
+        except Exception as exc:  # never block a write on the vector path
+            return f"{stdout}\n[vectors: skipped — {exc}]"
+    return stdout
 
 
 def append_section(note_id: str, body: str, section_date: str | None = None) -> dict:
@@ -73,7 +82,7 @@ def append_section(note_id: str, body: str, section_date: str | None = None) -> 
     new_body = note.body.rstrip() + f"\n\n## {section_date}\n\n{body.strip()}\n"
     note.path.write_text(_render_note(fm, new_body), encoding="utf-8")
 
-    reindex_out = run_reindex()
+    reindex_out = run_reindex(note.id)
     return {
         "id": note.id,
         "path": str(note.path.relative_to(VAULT_PATH)),
@@ -115,7 +124,7 @@ def create_note(
     fm["updated"] = today
 
     path.write_text(_render_note(fm, body), encoding="utf-8")
-    reindex_out = run_reindex()
+    reindex_out = run_reindex(slug)
     return {
         "id": slug,
         "path": str(path.relative_to(VAULT_PATH)),
@@ -172,7 +181,7 @@ def create_dated(
     fm["created"] = file_date
 
     path.write_text(_render_note(fm, body), encoding="utf-8")
-    reindex_out = run_reindex()
+    reindex_out = run_reindex(path.stem)
     return {
         "id": path.stem,
         "path": str(path.relative_to(VAULT_PATH)),

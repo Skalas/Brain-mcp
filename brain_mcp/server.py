@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import vault, writes
+from . import vault, vectors, writes
 
 mcp = FastMCP("brain")
 
@@ -89,6 +89,54 @@ def create_dated(
         date: optional YYYY-MM-DD; defaults to today.
     """
     return writes.create_dated(kind, slug, body, frontmatter, date)
+
+
+@mcp.tool()
+def search_semantic(
+    query: str,
+    k: int = 10,
+    type: str | None = None,
+) -> list[dict]:
+    """Semantic (vector) search over vault sections using local bge-m3 embeddings.
+
+    Returns top-k notes ranked by cosine similarity. Best for "I don't remember the
+    exact words" recall and cross-language queries (ES ↔ EN).
+
+    Args:
+        query: natural-language query.
+        k: max results.
+        type: optional frontmatter type filter.
+    """
+    return vectors.search_semantic(query, k=k, type_filter=type)
+
+
+@mcp.tool()
+def search_hybrid(
+    query: str,
+    k: int = 10,
+    type: str | None = None,
+) -> list[dict]:
+    """Hybrid search: reciprocal-rank fusion of semantic + grep results.
+
+    Use this as the default search when you want both exact-string and conceptual recall.
+    """
+    return vectors.search_hybrid(query, k=k, type_filter=type)
+
+
+@mcp.tool()
+def reindex_vectors(full: bool = False, note_id: str | None = None) -> dict:
+    """Rebuild the vector index.
+
+    Args:
+        full: if true, walk the entire vault (prunes deleted notes too).
+        note_id: if provided, reindex only that note.
+    """
+    if note_id:
+        return vectors.reindex_note(note_id)
+    if full:
+        return vectors.reindex_all(prune=True)
+    result = vectors.ensure_indexed()
+    return result or {"status": "already_indexed"}
 
 
 def main() -> None:
