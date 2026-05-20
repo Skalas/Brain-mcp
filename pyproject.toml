@@ -6,10 +6,13 @@ requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.2.0",
     "pyyaml>=6.0",
+    "sqlite-vec>=0.1.6",
+    "fastembed>=0.4.0",
 ]
 
 [project.scripts]
 brain-mcp = "brain_mcp.server:main"
+brain-reindex = "brain_mcp.cli:reindex"
 
 [build-system]
 requires = ["hatchling"]
