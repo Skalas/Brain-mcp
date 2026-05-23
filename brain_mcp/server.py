@@ -309,7 +309,8 @@ def _register_living_list_kind(kind: kinds_mod.Kind) -> None:
         description=(
             f"List {kind.name} entries. By default excludes terminal states "
             f"({list(kind.terminal_states)}); pass `where={{state: '<terminal>'}}` to see completed items. "
-            f"Other filters: {list(kind.retrieval_filters) + ['state', 'tag']}."
+            f"Other filters: {list(kind.retrieval_filters) + ['state', 'tag']}. "
+            "If this returns an empty list [], do NOT retry the same query; assume no matching items exist."
         ),
     )
     def list_ll(where: dict | None = None) -> list[dict]:

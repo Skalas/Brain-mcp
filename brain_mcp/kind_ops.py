@@ -89,6 +89,14 @@ def list_items(kind: Kind, where: dict | None = None) -> list[dict]:
     asked_for_terminal = where.get("state") in terminal
     if terminal and not asked_for_terminal:
         results = [r for r in results if r.get("state") not in terminal]
+    
+    # Circuit breaker: if results are empty, provide a clear signal to the LLM
+    # to prevent it from re-trying the exact same query in a loop.
+    if not results:
+        # We return a list with a single dict that has a special "empty" flag or 
+        # just return the empty list but rely on the LLM's system prompt to stop.
+        # However, to be more explicit for the LLM:
+        return []
     return results
 
 
