@@ -120,6 +120,11 @@ VAULT_PATH="…" uv run brain-reindex --full
 
 # Reindex a single note by id.
 VAULT_PATH="…" uv run brain-reindex --note kavak-pricing-q1
+
+# Drop the vector store and re-embed from scratch.
+# Run once per machine after an embedding-model pooling/dimension change
+# (e.g. fastembed switching multilingual-e5-large from CLS to mean pooling).
+VAULT_PATH="…" uv run brain-reindex --rebuild
 ```
 
 ## Guardrails

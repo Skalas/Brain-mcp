@@ -215,6 +215,23 @@ def _delete_note(note_id: str, reason: str = "deleted") -> dict:
     return {"note_id": note_id, "deleted": len(rows), "reason": reason}
 
 
+def rebuild_all() -> dict:
+    """Drop the vector store and re-embed every note from scratch.
+
+    Use this when the embedding model's pooling strategy or dimensionality
+    changes, so the corpus doesn't end up mixing incompatible vectors.
+    """
+    conn = _db()
+    conn.execute("DROP TABLE IF EXISTS vec_chunks")
+    conn.execute("DELETE FROM chunks")
+    conn.execute(
+        f"CREATE VIRTUAL TABLE vec_chunks "
+        f"USING vec0(embedding float[{EMBED_DIM}] distance_metric=cosine)"
+    )
+    conn.commit()
+    return reindex_all(prune=False)
+
+
 def reindex_all(prune: bool = True) -> dict:
     """Walk the vault and reindex every note. If prune, drop chunks for notes that no longer exist."""
     conn = _db()

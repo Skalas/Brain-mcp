@@ -25,6 +25,12 @@ def reindex() -> None:
         metavar="ID",
         help="Reindex a single note by id (filename stem).",
     )
+    group.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Drop the vector store and re-embed everything from scratch "
+        "(use after an embedding-model pooling or dimensionality change).",
+    )
     parser.add_argument(
         "--bootstrap",
         action="store_true",
@@ -35,6 +41,8 @@ def reindex() -> None:
     t0 = time.time()
     if args.note:
         result = vectors.reindex_note(args.note)
+    elif args.rebuild:
+        result = vectors.rebuild_all()
     elif args.bootstrap:
         result = vectors.ensure_indexed() or {"status": "already_indexed"}
     else:
