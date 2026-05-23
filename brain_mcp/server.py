@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from . import vault, vectors, writes
+from . import kind_ops, kinds as kinds_mod, vault, vectors, writes
 
 mcp = FastMCP("brain")
+
+KINDS = kinds_mod.load_kinds()
 
 
 @mcp.tool()
@@ -42,8 +44,53 @@ def list_index(name: str) -> str:
 
 
 @mcp.tool()
+def get_doctrine() -> str:
+    """Return the vault's write conventions and schema (`_system/CLAUDE.md`).
+
+    Read this BEFORE any vault write (append_section, create_note, create_dated,
+    add_<kind>, update_<kind>) to learn:
+    - Frontmatter schema per note type (person, project, topic, ref, meeting, daily, conversation)
+    - Filename rules (kebab-case, dated folders, collision handling)
+    - Body structure (dated H2 sections, wikilinks, language matching)
+    - Guardrails — what requires user confirmation (deletes, renames, bulk ops, git commits)
+
+    Cheap to call (~5KB). Call once per session before the first write.
+    """
+    return vault.read_doctrine()
+
+
+@mcp.tool()
+def list_workflows() -> list[dict]:
+    """List workflow recipes available in the vault.
+
+    A "workflow" is a multi-step procedure declared in `_system/recipes/*.md`
+    without `kind:`/`class:` frontmatter (those are kind definitions — see
+    list_kinds). Examples: conversation-append-pass, function-first-project-rewrite.
+
+    Returns: [{name, description}, ...]. Call get_workflow(name) to read the body.
+    """
+    return vault.list_workflows()
+
+
+@mcp.tool()
+def get_workflow(name: str) -> str:
+    """Return a workflow recipe's full body (instructions to follow).
+
+    Call after list_workflows() identifies a matching workflow. The body is
+    plain markdown — read it and follow the steps exactly.
+    """
+    return vault.get_workflow(name)
+
+
+@mcp.tool()
 def append_section(id: str, body: str, date: str | None = None) -> dict:
     """Append a dated H2 section to an existing note.
+
+    For structured entities (book, recipe, task, etc.), prefer the per-kind tools
+    (add_<kind>, update_<kind>) — they enforce schema. Use this only for
+    unstructured updates to existing person/project/topic/ref notes.
+
+    Before first write, call get_doctrine() for body structure and language rules.
 
     Args:
         id: note id (filename stem). Note must already exist.
@@ -61,6 +108,12 @@ def create_note(
     body: str,
 ) -> dict:
     """Create a new note in notes/. Fails if slug already exists.
+
+    For structured entities (book, recipe, task), prefer add_<kind> — it enforces
+    the recipe's field contract and runs side effects. Use this only for
+    unstructured new entities (person, project, topic, ref) without a kind.
+
+    Before first write, call get_doctrine() for the frontmatter schema and required fields per type.
 
     Args:
         type: one of person, project, topic, ref.
@@ -80,6 +133,8 @@ def create_dated(
     date: str | None = None,
 ) -> dict:
     """Create a new file in daily/, meetings/, or conversations/.
+
+    Before first write, call get_doctrine() for filename rules and required frontmatter per dated kind.
 
     Args:
         kind: daily, meetings, or conversations.
@@ -137,6 +192,135 @@ def reindex_vectors(full: bool = False, note_id: str | None = None) -> dict:
         return vectors.reindex_all(prune=True)
     result = vectors.ensure_indexed()
     return result or {"status": "already_indexed"}
+
+
+@mcp.tool()
+def list_kinds() -> list[dict]:
+    """List all structured-entity kinds registered in the vault.
+
+    A "kind" is a typed entity (book, recipe, task, …) declared by a recipe
+    file under `_system/recipes/`. Each kind exposes its own add/find/update
+    tools depending on its interaction class.
+
+    Call this first when you're not sure what's available.
+    """
+    return [
+        {
+            "name": k.name,
+            "class": k.klass,
+            "description": k.description,
+            "fields_required": list(k.required_fields),
+            "fields_optional": list(k.optional_fields),
+            "retrieval_filters": list(k.retrieval_filters),
+            "states": list(k.states) if k.klass == "living-list" else None,
+        }
+        for k in KINDS.values()
+    ]
+
+
+@mcp.tool()
+def get_recipe(kind: str) -> dict:
+    """Get the recipe (instructions) for a kind.
+
+    Call this BEFORE invoking `add_<kind>` so you know what fields to gather,
+    what enrichment steps the recipe expects, and what the resulting note
+    should look like.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"Unknown kind {kind!r}. Available: {sorted(KINDS)}")
+    k = KINDS[kind]
+    return {
+        "kind": k.name,
+        "class": k.klass,
+        "description": k.description,
+        "fields_required": list(k.required_fields),
+        "fields_optional": list(k.optional_fields),
+        "states": list(k.states) if k.klass == "living-list" else None,
+        "default_state": k.default_state,
+        "instructions": k.body,
+    }
+
+
+def _add_description(kind: kinds_mod.Kind) -> str:
+    parts = [f"Add a new {kind.name}."]
+    if kind.description:
+        parts.append(kind.description)
+    parts.append(f"Required fields in `data`: {list(kind.required_fields)}.")
+    if kind.optional_fields:
+        parts.append(f"Optional: {list(kind.optional_fields)}.")
+    parts.append(f"`body` is the freeform markdown content of the resulting note.")
+    parts.append(f"For full instructions (enrichment, side effects, body shape), call get_recipe('{kind.name}').")
+    return " ".join(parts)
+
+
+def _find_description(kind: kinds_mod.Kind) -> str:
+    filters = list(kind.retrieval_filters) + ["tag"]
+    return (
+        f"Find {kind.name} entries. "
+        f"`where` keys must be one of {filters}; scalar values match exactly, list values match any-of. "
+        f"`tag` matches if the value appears in the note's tags."
+    )
+
+
+def _register_archive_kind(kind: kinds_mod.Kind) -> None:
+    """Register `add_<kind>` and `find_<kind>` for an archive-class kind."""
+
+    @mcp.tool(name=f"add_{kind.name}", description=_add_description(kind))
+    def add_archive(data: dict, body: str = "") -> dict:
+        return kind_ops.add(kind, data, body)
+
+    @mcp.tool(name=f"find_{kind.name}", description=_find_description(kind))
+    def find_archive(where: dict | None = None) -> list[dict]:
+        return kind_ops.find(kind, where)
+
+
+def _register_living_list_kind(kind: kinds_mod.Kind) -> None:
+    """Register add/update/complete/list for a living-list-class kind."""
+
+    @mcp.tool(name=f"add_{kind.name}", description=_add_description(kind))
+    def add_ll(data: dict, body: str = "") -> dict:
+        return kind_ops.add(kind, data, body)
+
+    @mcp.tool(
+        name=f"update_{kind.name}",
+        description=(
+            f"Patch fields on an existing {kind.name}. `id` is the note id (filename stem). "
+            f"`patch` may include any of {list(kind.required_fields) + list(kind.optional_fields)} "
+            f"or `state` (one of {list(kind.states)})."
+        ),
+    )
+    def update_ll(id: str, patch: dict) -> dict:
+        return kind_ops.update(kind, id, patch)
+
+    @mcp.tool(
+        name=f"complete_{kind.name}",
+        description=(
+            f"Mark a {kind.name} as complete. Flips `state` to {kind.terminal_states[0]!r} "
+            f"(the first terminal state). `id` is the note id."
+            if kind.terminal_states
+            else f"Mark a {kind.name} as complete."
+        ),
+    )
+    def complete_ll(id: str) -> dict:
+        return kind_ops.complete(kind, id)
+
+    @mcp.tool(
+        name=f"list_{kind.name}",
+        description=(
+            f"List {kind.name} entries. By default excludes terminal states "
+            f"({list(kind.terminal_states)}); pass `where={{state: '<terminal>'}}` to see completed items. "
+            f"Other filters: {list(kind.retrieval_filters) + ['state', 'tag']}."
+        ),
+    )
+    def list_ll(where: dict | None = None) -> list[dict]:
+        return kind_ops.list_items(kind, where)
+
+
+for _kind in KINDS.values():
+    if _kind.klass == "archive":
+        _register_archive_kind(_kind)
+    elif _kind.klass == "living-list":
+        _register_living_list_kind(_kind)
 
 
 def main() -> None:

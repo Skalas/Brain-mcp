@@ -167,5 +167,59 @@ def read_index(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def read_doctrine() -> str:
+    """Return the vault's conventions file (`_system/CLAUDE.md`) verbatim."""
+    path = SYSTEM_DIR / "CLAUDE.md"
+    if not path.exists():
+        raise VaultError(f"Vault doctrine missing at {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def list_workflows() -> list[dict]:
+    """List workflow recipes (recipes without `kind:` frontmatter — those are kinds).
+
+    Returns: [{name, description}, ...] where description is the first non-heading
+    line of the recipe body (truncated to 200 chars).
+    """
+    recipes_dir = SYSTEM_DIR / "recipes"
+    if not recipes_dir.exists():
+        return []
+    out: list[dict] = []
+    import yaml as _yaml
+    for path in sorted(recipes_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        match = FRONTMATTER_RE.match(text)
+        body = text
+        if match:
+            try:
+                fm = _yaml.safe_load(match.group(1)) or {}
+                if isinstance(fm, dict) and "kind" in fm and "class" in fm:
+                    continue  # this is a kind definition, not a workflow
+            except _yaml.YAMLError:
+                pass
+            body = match.group(2)
+        description = ""
+        for line in body.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                description = line[:200]
+                break
+        if not description:
+            for line in body.splitlines():
+                if line.startswith("# "):
+                    description = line[2:].strip()
+                    break
+        out.append({"name": path.stem, "description": description})
+    return out
+
+
+def get_workflow(name: str) -> str:
+    """Return a workflow recipe's full body (frontmatter + markdown)."""
+    path = SYSTEM_DIR / "recipes" / f"{name}.md"
+    if not path.exists():
+        raise VaultError(f"Workflow {name!r} not found at {path}")
+    return path.read_text(encoding="utf-8")
+
+
 def today_iso() -> str:
     return date.today().isoformat()

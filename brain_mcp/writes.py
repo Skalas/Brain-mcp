@@ -80,7 +80,7 @@ def append_section(note_id: str, body: str, section_date: str | None = None) -> 
     fm["updated"] = section_date
 
     new_body = note.body.rstrip() + f"\n\n## {section_date}\n\n{body.strip()}\n"
-    note.path.write_text(_render_note(fm, new_body), encoding="utf-8")
+    note.path.write_text(render_note(fm, new_body), encoding="utf-8")
 
     reindex_out = run_reindex(note.id)
     return {
@@ -123,7 +123,7 @@ def create_note(
     fm["created"] = today
     fm["updated"] = today
 
-    path.write_text(_render_note(fm, body), encoding="utf-8")
+    path.write_text(render_note(fm, body), encoding="utf-8")
     reindex_out = run_reindex(slug)
     return {
         "id": slug,
@@ -180,7 +180,7 @@ def create_dated(
     fm["id"] = path.stem
     fm["created"] = file_date
 
-    path.write_text(_render_note(fm, body), encoding="utf-8")
+    path.write_text(render_note(fm, body), encoding="utf-8")
     reindex_out = run_reindex(path.stem)
     return {
         "id": path.stem,
@@ -189,6 +189,6 @@ def create_dated(
     }
 
 
-def _render_note(frontmatter: dict, body: str) -> str:
+def render_note(frontmatter: dict, body: str) -> str:
     fm_text = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()
     return f"---\n{fm_text}\n---\n{body.rstrip()}\n"
