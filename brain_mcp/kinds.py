@@ -43,6 +43,7 @@ class Kind:
     states: tuple[str, ...]
     default_state: str | None
     terminal_states: tuple[str, ...]
+    list_hint: str
     body: str
     recipe_path: Path
 
@@ -129,6 +130,7 @@ def _parse_recipe(path: Path) -> Kind | None:
         states=states,
         default_state=default_state,
         terminal_states=terminal_states,
+        list_hint=str(fm.get("list_hint") or "").strip(),
         body=body,
         recipe_path=path,
     )

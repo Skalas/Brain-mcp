@@ -304,15 +304,16 @@ def _register_living_list_kind(kind: kinds_mod.Kind) -> None:
     def complete_ll(id: str) -> dict:
         return kind_ops.complete(kind, id)
 
-    @mcp.tool(
-        name=f"list_{kind.name}",
-        description=(
-            f"List {kind.name} entries. By default excludes terminal states "
-            f"({list(kind.terminal_states)}); pass `where={{state: '<terminal>'}}` to see completed items. "
-            f"Other filters: {list(kind.retrieval_filters) + ['state', 'tag']}. "
-            "If this returns an empty list [], do NOT retry the same query; assume no matching items exist."
-        ),
+    _list_desc = (
+        f"List {kind.name} entries. By default excludes terminal states "
+        f"({list(kind.terminal_states)}); pass `where={{state: '<terminal>'}}` to see completed items. "
+        f"Other filters: {list(kind.retrieval_filters) + ['state', 'tag']}. "
+        "If this returns an empty list [], do NOT retry the same query; assume no matching items exist."
     )
+    if kind.list_hint:
+        _list_desc = f"{kind.list_hint}\n\n{_list_desc}"
+
+    @mcp.tool(name=f"list_{kind.name}", description=_list_desc)
     def list_ll(where: dict | None = None) -> list[dict]:
         return kind_ops.list_items(kind, where)
 
