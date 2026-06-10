@@ -101,6 +101,29 @@ def append_section(id: str, body: str, date: str | None = None) -> dict:
 
 
 @mcp.tool()
+def edit_note(id: str, old_string: str, new_string: str) -> dict:
+    """Edit a note's body by exact-string replacement. DESTRUCTIVE — removes content permanently.
+
+    Confirm with the user before calling: state exactly what will be removed or
+    replaced and get an explicit yes. Never call this speculatively.
+
+    Use for corrections and removals of content that should not be in the note.
+    For adding new content, use append_section instead. Frontmatter is not
+    editable here — use update_<kind> for structured fields.
+
+    Workflow: read_note(id) first, copy the exact text (whitespace included) as
+    old_string. It must match the body exactly once; the call fails with a count
+    if it matches zero or multiple times.
+
+    Args:
+        id: note id (filename stem).
+        old_string: exact text currently in the body. Must be unique within the note.
+        new_string: replacement text. Pass "" to delete old_string entirely.
+    """
+    return writes.edit_note(id, old_string, new_string)
+
+
+@mcp.tool()
 def create_note(
     type: str,
     slug: str,

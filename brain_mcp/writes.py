@@ -91,6 +91,50 @@ def append_section(note_id: str, body: str, section_date: str | None = None) -> 
     }
 
 
+def edit_note(note_id: str, old_string: str, new_string: str) -> dict:
+    if not old_string:
+        raise VaultError("old_string must be non-empty.")
+    if old_string == new_string:
+        raise VaultError("old_string and new_string are identical; nothing to edit.")
+
+    note = find_note_by_id(note_id)
+    if note is None:
+        raise VaultError(f"Note {note_id!r} does not exist.")
+    assert_inside_vault(note.path)
+
+    count = note.body.count(old_string)
+    if count == 0:
+        raise VaultError(
+            f"old_string not found in the body of {note_id!r}. "
+            "Read the note first and copy the exact text, including whitespace. "
+            "Note: frontmatter is not editable with this tool."
+        )
+    if count > 1:
+        raise VaultError(
+            f"old_string appears {count} times in {note_id!r}. "
+            "Include surrounding context so it matches exactly once."
+        )
+
+    new_body = note.body.replace(old_string, new_string)
+    fm = dict(note.frontmatter)
+    fm["updated"] = today_iso()
+    note.path.write_text(render_note(fm, new_body), encoding="utf-8")
+
+    reindex_out = run_reindex(note.id)
+    return {
+        "id": note.id,
+        "path": str(note.path.relative_to(VAULT_PATH)),
+        "removed": _excerpt(old_string),
+        "inserted": _excerpt(new_string),
+        "updated": fm["updated"],
+        "reindex": reindex_out,
+    }
+
+
+def _excerpt(text: str, limit: int = 200) -> str:
+    return text if len(text) <= limit else f"{text[:limit]}… [{len(text)} chars]"
+
+
 def create_note(
     note_type: str, slug: str, frontmatter: dict, body: str
 ) -> dict:
