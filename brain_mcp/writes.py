@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from .vault import (
+    ARCHIVE_DIR,
     CONVERSATIONS_DIR,
     DAILY_DIR,
     MEETINGS_DIR,
@@ -17,8 +18,10 @@ from .vault import (
     VaultError,
     assert_inside_vault,
     find_note_by_id,
+    find_references,
     parse_note,
     today_iso,
+    wikilink_re,
 )
 
 REINDEX_SCRIPT = SYSTEM_DIR / "scripts" / "reindex.sh"
@@ -133,6 +136,107 @@ def edit_note(note_id: str, old_string: str, new_string: str) -> dict:
 
 def _excerpt(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else f"{text[:limit]}… [{len(text)} chars]"
+
+
+def _unlink_reference(match: re.Match, note_id: str) -> str:
+    """Turn a `[[note_id|alias]]`/`[[note_id#h]]`/`[[note_id]]` match into plain text."""
+    suffix = match.group(1) or ""
+    if suffix.startswith("|"):
+        return suffix[1:]  # keep the display alias
+    return note_id  # `[[id]]` or `[[id#heading]]` → the id as plain text
+
+
+def archive_note(note_id: str, strip_refs: bool = False) -> dict:
+    """Soft-archive a note: move it to `_archive/`, prune its vectors, drop it from
+    active search/MOCs. Reversible via restore_note. DESTRUCTIVE — confirm first."""
+    note = find_note_by_id(note_id)
+    if note is None:
+        raise VaultError(f"Note {note_id!r} does not exist.")
+    assert_inside_vault(note.path)
+    if note.path.parent == ARCHIVE_DIR:
+        raise VaultError(f"Note {note_id!r} is already archived.")
+
+    dest = ARCHIVE_DIR / note.path.name
+    if dest.exists():
+        raise VaultError(
+            f"{dest.relative_to(VAULT_PATH)} already exists; resolve the collision first."
+        )
+
+    referencing = find_references(note_id)
+    stripped: list[str] = []
+    if strip_refs and referencing:
+        pattern = wikilink_re(note_id)
+        for ref in referencing:
+            new_body = pattern.sub(lambda m: _unlink_reference(m, note_id), ref.body)
+            fm = dict(ref.frontmatter)
+            fm["updated"] = today_iso()
+            ref.path.write_text(render_note(fm, new_body), encoding="utf-8")
+            run_reindex(ref.id)
+            stripped.append(ref.id)
+
+    fm = dict(note.frontmatter)
+    fm["status"] = "archived"
+    fm["archived"] = today_iso()
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    dest.write_text(render_note(fm, note.body), encoding="utf-8")
+    note.path.unlink()
+
+    from . import vectors
+
+    vec = vectors._delete_note(note_id, reason="archived")
+    reindex_out = run_reindex()
+
+    result = {
+        "id": note_id,
+        "archived_to": str(dest.relative_to(VAULT_PATH)),
+        "vectors_pruned": vec["deleted"],
+        "referenced_by": [r.id for r in referencing],
+        "reindex": reindex_out,
+    }
+    if strip_refs:
+        result["stripped_refs_from"] = stripped
+    elif referencing:
+        result["note"] = (
+            f"{len(referencing)} note(s) still wikilink to {note_id!r}; links resolve "
+            "from _archive/. Pass strip_refs=true to unlink them."
+        )
+    return result
+
+
+def restore_note(note_id: str, note_type: str | None = None) -> dict:
+    """Move an archived note back to active (notes/), flip status to active, reindex."""
+    src = ARCHIVE_DIR / f"{note_id}.md"
+    if not src.exists():
+        raise VaultError(f"No archived note {note_id!r} in _archive/.")
+    note = parse_note(src)
+
+    # Dated kinds belong in their own folders; everything else returns to notes/.
+    folder_by_type = {
+        "daily": DAILY_DIR,
+        "meeting": MEETINGS_DIR,
+        "conversation": CONVERSATIONS_DIR,
+    }
+    folder = folder_by_type.get(note.frontmatter.get("type", ""), NOTES_DIR)
+    dest = folder / src.name
+    if dest.exists():
+        raise VaultError(
+            f"{dest.relative_to(VAULT_PATH)} already exists; resolve the collision first."
+        )
+
+    fm = dict(note.frontmatter)
+    fm["status"] = "active"
+    fm.pop("archived", None)
+    if note_type:
+        fm["type"] = note_type
+    dest.write_text(render_note(fm, note.body), encoding="utf-8")
+    src.unlink()
+
+    reindex_out = run_reindex(note_id)
+    return {
+        "id": note_id,
+        "restored_to": str(dest.relative_to(VAULT_PATH)),
+        "reindex": reindex_out,
+    }
 
 
 def create_note(

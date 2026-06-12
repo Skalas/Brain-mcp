@@ -23,8 +23,10 @@ MEETINGS_DIR = VAULT_PATH / "meetings"
 CONVERSATIONS_DIR = VAULT_PATH / "conversations"
 INDEX_DIR = VAULT_PATH / "_index"
 SYSTEM_DIR = VAULT_PATH / "_system"
+ARCHIVE_DIR = VAULT_PATH / "_archive"
 
-WRITABLE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR)
+ACTIVE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR)
+WRITABLE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR)
 READONLY_DIRS = (SYSTEM_DIR, INDEX_DIR, VAULT_PATH / ".obsidian")
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
@@ -76,15 +78,18 @@ def parse_note(path: Path) -> Note:
 
 
 def find_note_by_id(note_id: str) -> Note | None:
-    for d in (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR):
+    for d in (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR):
         candidate = d / f"{note_id}.md"
         if candidate.exists():
             return parse_note(candidate)
     return None
 
 
-def iter_notes(folders: Iterable[Path] | None = None) -> Iterable[Note]:
-    folders = folders or (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR)
+def iter_notes(
+    folders: Iterable[Path] | None = None, *, include_archived: bool = False
+) -> Iterable[Note]:
+    if folders is None:
+        folders = ACTIVE_DIRS + (ARCHIVE_DIR,) if include_archived else ACTIVE_DIRS
     for folder in folders:
         if not folder.exists():
             continue
@@ -97,11 +102,12 @@ def search_notes(
     type_filter: str | None = None,
     updated_since: str | None = None,
     k: int = 10,
+    include_archived: bool = False,
 ) -> list[dict]:
     query_lower = query.lower()
     hits: list[tuple[int, Note, str]] = []
 
-    for note in iter_notes():
+    for note in iter_notes(include_archived=include_archived):
         if type_filter and note.frontmatter.get("type") != type_filter:
             continue
         if updated_since:
@@ -144,9 +150,25 @@ def search_notes(
                 "updated": note.frontmatter.get("updated"),
                 "score": score,
                 "snippet": snippet,
+                "archived": note.path.parent == ARCHIVE_DIR,
             }
         )
     return out
+
+
+def wikilink_re(note_id: str) -> re.Pattern:
+    """Match `[[note_id]]`, `[[note_id|alias]]`, `[[note_id#heading]]` (any combo)."""
+    return re.compile(r"\[\[" + re.escape(note_id) + r"((?:#|\|)[^\]]*)?\]\]")
+
+
+def find_references(note_id: str) -> list[Note]:
+    """Active notes whose body wikilinks to `note_id` (the archived note excluded)."""
+    pattern = wikilink_re(note_id)
+    return [
+        note
+        for note in iter_notes()
+        if note.id != note_id and pattern.search(note.body)
+    ]
 
 
 def _first_line(body: str) -> str:

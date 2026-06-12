@@ -16,6 +16,7 @@ def search_notes(
     type: str | None = None,
     updated_since: str | None = None,
     k: int = 10,
+    include_archived: bool = False,
 ) -> list[dict]:
     """Search vault notes by substring across aliases, ids, and body.
 
@@ -24,8 +25,12 @@ def search_notes(
         type: optional frontmatter type filter (person, project, topic, ref, meeting, daily, conversation).
         updated_since: optional YYYY-MM-DD; only include notes whose `updated` >= this date.
         k: max results.
+        include_archived: if true, also search notes in _archive/ (excluded by default).
+            Each result carries an `archived` boolean. Note: semantic/hybrid search
+            cannot surface archived notes (their vectors are pruned on archive) — use
+            this substring search, or read_note(id) directly, to reach them.
     """
-    return vault.search_notes(query, type, updated_since, k)
+    return vault.search_notes(query, type, updated_since, k, include_archived)
 
 
 @mcp.tool()
@@ -121,6 +126,41 @@ def edit_note(id: str, old_string: str, new_string: str) -> dict:
         new_string: replacement text. Pass "" to delete old_string entirely.
     """
     return writes.edit_note(id, old_string, new_string)
+
+
+@mcp.tool()
+def archive_note(id: str, strip_refs: bool = False) -> dict:
+    """Retire a whole note: move it to _archive/, prune its vectors, drop it from
+    active search and MOCs. DESTRUCTIVE but REVERSIBLE — undo with restore_note.
+
+    Use this to remove a subject altogether (e.g. a one-off contact you no longer
+    track), as opposed to edit_note which only changes body text within a note.
+
+    Confirm with the user before calling: name the note and get an explicit yes.
+
+    The archived file still exists, so [[wikilinks]] to it from other notes keep
+    resolving in Obsidian. By default this only REPORTS which notes reference it
+    (returned as `referenced_by`). Pass strip_refs=true ONLY if the user explicitly
+    wants those links unlinked — that edits other notes and is not undone by restore.
+
+    Args:
+        id: note id (filename stem) to archive.
+        strip_refs: if true, rewrite every referencing note to unlink [[id]]
+            (keeping any display alias as plain text). Default false.
+    """
+    return writes.archive_note(id, strip_refs)
+
+
+@mcp.tool()
+def restore_note(id: str, type: str | None = None) -> dict:
+    """Restore an archived note: move it from _archive/ back to its active folder,
+    flip status to active, drop the `archived` date, and reindex.
+
+    Args:
+        id: archived note id (filename stem).
+        type: optional frontmatter type override if it changed while archived.
+    """
+    return writes.restore_note(id, type)
 
 
 @mcp.tool()
