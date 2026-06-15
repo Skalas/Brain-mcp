@@ -156,18 +156,61 @@ def search_notes(
     return out
 
 
+# Fenced code blocks (``` … ``` or ~~~ … ~~~) and inline code spans (`…`).
+# Wikilinks inside these are documentation examples, not real links, so we mask
+# them before scanning. Keep this in sync with the vault reindex script's
+# link-extraction so frontmatter `links:` and reference lookups agree.
+FENCED_CODE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$", re.DOTALL | re.MULTILINE)
+INLINE_CODE_RE = re.compile(r"(`+)(?:.+?)\1")
+
+
+def strip_code(text: str) -> str:
+    """Blank out fenced code blocks and inline code spans.
+
+    Wikilink syntax shown as an example (e.g. `[[wikilink]]` inside backticks)
+    must not be mistaken for a real link.
+    """
+    text = FENCED_CODE_RE.sub(" ", text)
+    text = INLINE_CODE_RE.sub(" ", text)
+    return text
+
+
+def _code_spans(text: str) -> list[tuple[int, int]]:
+    """Character ranges covered by fenced code blocks and inline code spans."""
+    spans = [m.span() for m in FENCED_CODE_RE.finditer(text)]
+    spans += [m.span() for m in INLINE_CODE_RE.finditer(text)]
+    return sorted(spans)
+
+
+def sub_outside_code(pattern: re.Pattern, repl, text: str) -> str:
+    """Apply `pattern.sub(repl, ...)` to `text`, leaving code spans untouched."""
+    code = _code_spans(text)
+
+    def _repl(match: re.Match) -> str:
+        start = match.start()
+        if any(s <= start < e for s, e in code):
+            return match.group(0)
+        return repl(match)
+
+    return pattern.sub(_repl, text)
+
+
 def wikilink_re(note_id: str) -> re.Pattern:
     """Match `[[note_id]]`, `[[note_id|alias]]`, `[[note_id#heading]]` (any combo)."""
     return re.compile(r"\[\[" + re.escape(note_id) + r"((?:#|\|)[^\]]*)?\]\]")
 
 
 def find_references(note_id: str) -> list[Note]:
-    """Active notes whose body wikilinks to `note_id` (the archived note excluded)."""
+    """Active notes whose body wikilinks to `note_id` (the archived note excluded).
+
+    Wikilinks appearing only inside code spans/blocks are examples, not real
+    references, so they are ignored.
+    """
     pattern = wikilink_re(note_id)
     return [
         note
         for note in iter_notes()
-        if note.id != note_id and pattern.search(note.body)
+        if note.id != note_id and pattern.search(strip_code(note.body))
     ]
 
 
