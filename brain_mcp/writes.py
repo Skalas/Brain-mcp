@@ -20,6 +20,7 @@ from .vault import (
     find_note_by_id,
     find_references,
     parse_note,
+    sub_outside_code,
     today_iso,
     wikilink_re,
 )
@@ -167,7 +168,9 @@ def archive_note(note_id: str, strip_refs: bool = False) -> dict:
     if strip_refs and referencing:
         pattern = wikilink_re(note_id)
         for ref in referencing:
-            new_body = pattern.sub(lambda m: _unlink_reference(m, note_id), ref.body)
+            new_body = sub_outside_code(
+                pattern, lambda m: _unlink_reference(m, note_id), ref.body
+            )
             fm = dict(ref.frontmatter)
             fm["updated"] = today_iso()
             ref.path.write_text(render_note(fm, new_body), encoding="utf-8")
