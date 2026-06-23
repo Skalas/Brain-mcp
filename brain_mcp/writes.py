@@ -11,6 +11,7 @@ from .vault import (
     ARCHIVE_DIR,
     CONVERSATIONS_DIR,
     DAILY_DIR,
+    DEFAULT_CONTEXT,
     MEETINGS_DIR,
     NOTES_DIR,
     SYSTEM_DIR,
@@ -26,7 +27,7 @@ from .vault import (
 )
 
 REINDEX_SCRIPT = SYSTEM_DIR / "scripts" / "reindex.sh"
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 VALID_TYPES = {"person", "project", "topic", "ref"}
@@ -163,6 +164,10 @@ def archive_note(note_id: str, strip_refs: bool = False) -> dict:
             f"{dest.relative_to(VAULT_PATH)} already exists; resolve the collision first."
         )
 
+    # Ensure the archive dir exists BEFORE mutating other notes, so a mkdir
+    # failure can't leave refs stripped while the note never moves.
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
     referencing = find_references(note_id)
     stripped: list[str] = []
     if strip_refs and referencing:
@@ -180,7 +185,6 @@ def archive_note(note_id: str, strip_refs: bool = False) -> dict:
     fm = dict(note.frontmatter)
     fm["status"] = "archived"
     fm["archived"] = today_iso()
-    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     dest.write_text(render_note(fm, note.body), encoding="utf-8")
     note.path.unlink()
 
@@ -266,7 +270,7 @@ def create_note(
         "created": today,
         "updated": today,
         "status": "active",
-        "context": "work",
+        "context": DEFAULT_CONTEXT,
         "links": [],
         **frontmatter,
     }
@@ -324,7 +328,7 @@ def create_dated(
         "created": file_date,
         "updated": file_date,
         "status": "active",
-        "context": "work",
+        "context": DEFAULT_CONTEXT,
         "links": [],
         **(frontmatter or {}),
     }

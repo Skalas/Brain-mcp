@@ -87,7 +87,10 @@ def list_items(kind: Kind, where: dict | None = None) -> list[dict]:
     where = where or {}
     results = find(kind, where)
     terminal = set(kind.terminal_states)
-    asked_for_terminal = where.get("state") in terminal
+    state_filter = where.get("state")
+    # state may be a list (any-of filter); only a scalar terminal state counts as
+    # "explicitly asked for terminal" — `list in set` would raise TypeError.
+    asked_for_terminal = isinstance(state_filter, str) and state_filter in terminal
     if terminal and not asked_for_terminal:
         results = [r for r in results if r.get("state") not in terminal]
     return results

@@ -1,6 +1,7 @@
 """Vault filesystem helpers: path resolution, frontmatter parsing, search."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -32,10 +33,18 @@ READONLY_DIRS = (SYSTEM_DIR, INDEX_DIR, VAULT_PATH / ".obsidian")
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
 
+# Default `context` for notes created directly (person/project/topic/ref and
+# dated daily/meeting/conversation) — this is a work vault. Structured kinds
+# (book/recipe) set their own default in kind_ops.DEFAULT_CONTEXT.
+DEFAULT_CONTEXT = "work"
+
 # A note id / recipe name is a filename stem: alphanumerics plus -, _, . — but
 # never a path separator. Rejecting `/` (and a leading non-alnum) makes `../`
 # traversal and absolute paths impossible before any path is built.
 SAFE_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+logger = logging.getLogger(__name__)
 
 
 class VaultError(Exception):
@@ -71,14 +80,15 @@ def assert_inside_vault(path: Path) -> Path:
 
 
 def parse_note(path: Path) -> Note:
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
     match = FRONTMATTER_RE.match(text)
     if not match:
         return Note(id=path.stem, path=path, frontmatter={}, body=text)
     fm_raw, body = match.group(1), match.group(2)
     try:
         fm = yaml.safe_load(fm_raw) or {}
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        logger.warning("Malformed YAML frontmatter in %s: %s", path.name, exc)
         fm = {"_parse_error": True}
     return Note(id=path.stem, path=path, frontmatter=fm, body=body)
 
@@ -470,7 +480,7 @@ def list_workflows() -> list[dict]:
     out: list[dict] = []
     import yaml as _yaml
     for path in sorted(recipes_dir.glob("*.md")):
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
         match = FRONTMATTER_RE.match(text)
         body = text
         if match:

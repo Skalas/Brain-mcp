@@ -54,7 +54,7 @@ class Kind:
 
 def _parse_recipe(path: Path) -> Kind | None:
     """Parse one recipe file. Returns None if it's a workflow recipe (no `kind:`)."""
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
     match = FM_RE.match(text)
     if not match:
         return None
@@ -159,12 +159,19 @@ def load_kinds(recipes_dir: Path = RECIPES_DIR) -> dict[str, Kind]:
 
 
 def slugify(value: str) -> str:
-    """Convert a string to a kebab-case slug. Strips accents, lowercases, hyphenates."""
+    """Convert a string to a kebab-case slug. Strips accents, lowercases, hyphenates.
+
+    For non-Latin titles (CJK, Cyrillic, …) where accent-stripping yields nothing,
+    falls back to Unicode word characters so the slug isn't empty (which would make
+    every such title collide on the kind-name fallback in render_slug).
+    """
     normalized = unicodedata.normalize("NFKD", str(value))
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
-    lowered = ascii_only.lower()
-    cleaned = re.sub(r"[^a-z0-9]+", "-", lowered)
-    return cleaned.strip("-")
+    cleaned = re.sub(r"[^a-z0-9]+", "-", ascii_only.lower()).strip("-")
+    if cleaned:
+        return cleaned
+    fallback = re.sub(r"[^\w]+", "-", str(value).lower(), flags=re.UNICODE).strip("-")
+    return fallback
 
 
 def render_slug(kind: Kind, data: dict) -> str:
