@@ -35,11 +35,34 @@ def search_notes(
 
 @mcp.tool()
 def read_note(id: str) -> dict:
-    """Read a full note by id (filename stem). Returns frontmatter + body."""
+    """Read a full note by id (filename stem).
+
+    Returns frontmatter + body plus a `links` field carrying the note's graph
+    edges: `{outbound: [{id, dangling}], inbound: [{id, path}]}`. Use these to
+    follow a thread (read a linked note) instead of re-searching from scratch.
+    """
     note = vault.find_note_by_id(id)
     if note is None:
         raise ValueError(f"Note {id!r} not found in notes/, daily/, meetings/, or conversations/.")
-    return note.to_payload()
+    payload = note.to_payload()
+    payload["links"] = vault.links_of(id)
+    return payload
+
+
+@mcp.tool()
+def links_of(id: str) -> dict:
+    """Return a note's wikilink graph edges without its body.
+
+    Args:
+        id: note id (filename stem).
+
+    Returns:
+        {"outbound": [{id, dangling}], "inbound": [{id, path}]} — outbound are
+        notes this one links to (dangling=true if the target doesn't exist);
+        inbound are notes that link here (backlinks). Links inside code
+        spans/blocks are ignored in both directions.
+    """
+    return vault.links_of(id)
 
 
 @mcp.tool()

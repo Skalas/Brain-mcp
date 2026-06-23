@@ -214,6 +214,54 @@ def find_references(note_id: str) -> list[Note]:
     ]
 
 
+# Any wikilink, capturing the target id (group 1) while discarding an optional
+# `#heading` and/or `|alias` suffix. Mirrors `wikilink_re` but matches any target.
+ANY_WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
+
+
+def existing_note_ids(include_archived: bool = True) -> set[str]:
+    """Set of note ids present in the vault (used to flag dangling outlinks)."""
+    return {note.id for note in iter_notes(include_archived=include_archived)}
+
+
+def extract_outlinks(body: str) -> list[str]:
+    """Target ids wikilinked from `body`, in first-seen order, deduplicated.
+
+    Links inside code spans/blocks are documentation examples, not real links,
+    so they are masked out before scanning (same rule as `find_references`).
+    """
+    seen: dict[str, None] = {}
+    for match in ANY_WIKILINK_RE.finditer(strip_code(body)):
+        target = match.group(1).strip()
+        if target:
+            seen.setdefault(target, None)
+    return list(seen)
+
+
+def links_of(note_id: str) -> dict:
+    """Outbound and inbound wikilinks for a note.
+
+    Returns ``{"outbound": [...], "inbound": [...]}`` where each outbound entry is
+    ``{"id", "dangling"}`` (dangling=True when the target note does not exist) and
+    each inbound entry is ``{"id", "path"}``. Code-span links are ignored in both
+    directions.
+    """
+    note = find_note_by_id(note_id)
+    if note is None:
+        raise VaultError(f"Note {note_id!r} not found.")
+    known = existing_note_ids()
+    outbound = [
+        {"id": target, "dangling": target not in known}
+        for target in extract_outlinks(note.body)
+        if target != note_id
+    ]
+    inbound = [
+        {"id": ref.id, "path": str(ref.path.relative_to(VAULT_PATH))}
+        for ref in find_references(note_id)
+    ]
+    return {"outbound": outbound, "inbound": inbound}
+
+
 def _first_line(body: str) -> str:
     for line in body.splitlines():
         line = line.strip()
