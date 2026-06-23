@@ -15,6 +15,7 @@ from .vault import (
     VAULT_PATH,
     Note,
     VaultError,
+    assert_inside_vault,
     find_note_by_id,
     iter_notes,
     today_iso,
@@ -167,8 +168,7 @@ def _append_line(target: Path, line: str, kind: Kind) -> None:
     If the file doesn't exist, stub + first line are written in a single call —
     no two-step window where the stub exists without the entry.
     """
-    if VAULT_PATH not in target.resolve().parents:
-        raise VaultError(f"Side-effect target {target} is outside the vault.")
+    assert_inside_vault(target)  # rejects paths outside the vault and read-only areas
     line_text = line.rstrip() + "\n"
     if not target.exists():
         stub_fm = {
