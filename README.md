@@ -175,3 +175,12 @@ brain_mcp/
 ```
 
 Clean architecture: `kinds`/`vault` are pure domain; `kind_ops`/`writes` are application; `server` is presentation; `vectors` is infrastructure.
+
+## Testing
+
+```sh
+uv pip install -e '.[dev]'
+uv run pytest
+```
+
+Tests run against a throwaway vault (`tests/conftest.py` builds it under a temp dir and points `VAULT_PATH`/`BRAIN_VECTOR_DB` at it before import). They cover parsing, path-traversal/read-only guards, the link graph, connection queries, centrality, kinds/slugs, and write flows — and never load the embedding model, so the full suite runs in well under a second.
