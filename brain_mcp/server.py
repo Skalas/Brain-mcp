@@ -296,12 +296,24 @@ def search_hybrid(
     query: str,
     k: int = 10,
     type: str | None = None,
+    structural_weight: float = 0.1,
 ) -> list[dict]:
     """Hybrid search: reciprocal-rank fusion of semantic + grep results.
 
     Use this as the default search when you want both exact-string and conceptual recall.
+
+    Scores get a small structural nudge: well-connected hub notes (high wikilink
+    degree) rank slightly higher among near-equal text matches. Pass
+    structural_weight=0 to rank on pure text relevance, or raise it to lean harder
+    on graph connectivity.
+
+    Args:
+        query: text / natural-language query.
+        k: max results.
+        type: optional frontmatter type filter.
+        structural_weight: link-degree boost factor (default 0.1; 0 disables).
     """
-    return vectors.search_hybrid(query, k=k, type_filter=type)
+    return vectors.search_hybrid(query, k=k, type_filter=type, structural_weight=structural_weight)
 
 
 @mcp.tool()

@@ -5,6 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -266,14 +267,37 @@ MAX_NEIGHBORHOOD_DEPTH = 3
 MAX_NEIGHBORHOOD_NODES = 100
 
 
+def _vault_signature() -> tuple:
+    """Cheap fingerprint of active notes (path, mtime, size) — only stats files.
+
+    Used as a cache key so the wikilink graph is recomputed when any note changes
+    and reused otherwise, instead of re-parsing the whole vault on every query.
+    """
+    sig = []
+    for folder in ACTIVE_DIRS:
+        if not folder.exists():
+            continue
+        for path in folder.glob("*.md"):
+            st = path.stat()
+            sig.append((str(path), st.st_mtime_ns, st.st_size))
+    return tuple(sorted(sig))
+
+
 def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
     """Directed wikilink graph over active notes.
 
     Returns ``(out_edges, in_edges, meta)``. Only edges whose target is an existing
     active note are kept (dangling links dropped). ``meta[id]`` carries ``type`` and
-    ``title`` for node payloads. Walks the vault per call — always consistent with
-    the current files, no stale cache.
+    ``title`` for node payloads. Cached on a vault mtime signature, so it recomputes
+    only when notes change — never stale, but not re-parsed on every query.
+
+    Callers must treat the returned structures as read-only (they are shared).
     """
+    return _graph_cached(_vault_signature())
+
+
+@lru_cache(maxsize=2)
+def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
     notes = list(iter_notes())
     ids = {n.id for n in notes}
     out: dict[str, set[str]] = {n.id: set() for n in notes}
@@ -289,6 +313,21 @@ def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]
                 out[note.id].add(target)
                 inn[target].add(note.id)
     return out, inn, meta
+
+
+def centrality() -> dict[str, float]:
+    """Degree centrality per active note, normalized to [0, 1] by the max degree.
+
+    A note's degree is its count of distinct wikilink neighbors (inbound ∪
+    outbound). Hub notes (heavily linked) score near 1.0; leaves near 0. Backed by
+    the cached graph, so repeated calls between writes are free.
+    """
+    out, inn, meta = _graph()
+    degree = {note_id: len(out[note_id] | inn[note_id]) for note_id in meta}
+    max_degree = max(degree.values(), default=0)
+    if max_degree == 0:
+        return {note_id: 0.0 for note_id in degree}
+    return {note_id: deg / max_degree for note_id, deg in degree.items()}
 
 
 def neighborhood(note_id: str, depth: int = 1) -> dict:
