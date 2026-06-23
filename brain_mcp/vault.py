@@ -32,6 +32,11 @@ READONLY_DIRS = (SYSTEM_DIR, INDEX_DIR, VAULT_PATH / ".obsidian")
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
 
+# A note id / recipe name is a filename stem: alphanumerics plus -, _, . — but
+# never a path separator. Rejecting `/` (and a leading non-alnum) makes `../`
+# traversal and absolute paths impossible before any path is built.
+SAFE_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 class VaultError(Exception):
     """Raised when an operation violates vault guardrails."""
@@ -58,10 +63,10 @@ class Note:
 def assert_inside_vault(path: Path) -> Path:
     resolved = path.resolve()
     if VAULT_PATH not in resolved.parents and resolved != VAULT_PATH:
-        raise VaultError(f"Path {resolved} is outside the vault.")
+        raise VaultError("Path escapes the vault boundary.")
     for ro in READONLY_DIRS:
         if ro in resolved.parents or resolved == ro:
-            raise VaultError(f"Path {resolved} is in a read-only area ({ro.name}).")
+            raise VaultError(f"Path is in a read-only area ({ro.name}).")
     return resolved
 
 
@@ -79,6 +84,8 @@ def parse_note(path: Path) -> Note:
 
 
 def find_note_by_id(note_id: str) -> Note | None:
+    if not SAFE_STEM_RE.match(note_id):
+        return None  # reject path-traversal / separators before building a path
     for d in (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR):
         candidate = d / f"{note_id}.md"
         if candidate.exists():
@@ -439,7 +446,7 @@ def read_index(name: str) -> str:
         raise VaultError(f"Unknown index {name!r}. Allowed: {sorted(allowed)}")
     path = INDEX_DIR / f"{name}.md"
     if not path.exists():
-        raise VaultError(f"Index {name} does not exist at {path}")
+        raise VaultError(f"Index {name!r} does not exist.")
     return path.read_text(encoding="utf-8")
 
 
@@ -447,7 +454,7 @@ def read_doctrine() -> str:
     """Return the vault's conventions file (`_system/CLAUDE.md`) verbatim."""
     path = SYSTEM_DIR / "CLAUDE.md"
     if not path.exists():
-        raise VaultError(f"Vault doctrine missing at {path}")
+        raise VaultError("Vault doctrine (_system/CLAUDE.md) is missing.")
     return path.read_text(encoding="utf-8")
 
 
@@ -491,9 +498,14 @@ def list_workflows() -> list[dict]:
 
 def get_workflow(name: str) -> str:
     """Return a workflow recipe's full body (frontmatter + markdown)."""
-    path = SYSTEM_DIR / "recipes" / f"{name}.md"
+    if not SAFE_STEM_RE.match(name):
+        raise VaultError(f"Invalid workflow name {name!r}.")
+    recipes_dir = (SYSTEM_DIR / "recipes").resolve()
+    path = (recipes_dir / f"{name}.md").resolve()
+    if recipes_dir not in path.parents:
+        raise VaultError(f"Invalid workflow name {name!r}.")
     if not path.exists():
-        raise VaultError(f"Workflow {name!r} not found at {path}")
+        raise VaultError(f"Workflow {name!r} not found.")
     return path.read_text(encoding="utf-8")
 
 
