@@ -47,9 +47,11 @@ def _db() -> sqlite3.Connection:
     import sqlite_vec
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False + WAL: future-proofs against threaded tool dispatch
-    # and lets the external reindex process read concurrently without lock errors.
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # WAL lets the external reindex process read concurrently without lock errors.
+    # Keep the default check_same_thread=True: FastMCP dispatches sync tools inline
+    # on the event-loop thread, so the cached connection stays single-threaded — and
+    # if that ever changes, we want a loud error, not silent disabling of the guard.
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
@@ -294,7 +296,12 @@ def search_semantic(
     for note_id, section_idx, heading, content, distance in rows:
         if note_id in seen:
             continue
-        note_type = meta.get(note_id, {}).get("type")
+        if note_id in meta:
+            note_type = meta[note_id]["type"]
+        else:
+            # archived / stale chunk not in the active graph — fall back to a read
+            note = find_note_by_id(note_id)
+            note_type = note.frontmatter.get("type") if note else None
         if type_filter and note_type != type_filter:
             continue
         seen.add(note_id)
@@ -406,8 +413,9 @@ def search_graph(
 
         picked: list[str] = []
         for nid in candidates:
-            if nid != sid and nid not in picked:
-                picked.append(nid)
+            if nid == sid or nid in picked:
+                continue
+            picked.append(nid)
             if len(picked) >= neighbors_per_seed:
                 break
 

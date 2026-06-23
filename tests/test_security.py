@@ -50,6 +50,15 @@ def test_error_messages_have_no_absolute_paths(vault_root):
             assert "/Users/" not in str(e)
 
 
+@pytest.mark.parametrize("bad", [
+    "../../../../etc/hosts", "../_system/CLAUDE", "..", "a/b", "/etc/passwd",
+])
+def test_restore_note_rejects_traversal(bad, stub_reindex):
+    import brain_mcp.writes as writes
+    with pytest.raises(VaultError):
+        writes.restore_note(bad)
+
+
 def test_append_line_blocks_readonly(vault_root):
     import brain_mcp.kind_ops as ko
     from brain_mcp.kinds import load_kinds
