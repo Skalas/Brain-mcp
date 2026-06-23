@@ -350,6 +350,80 @@ def search_hybrid(
     return [{**payload[nid], "score": round(score, 4)} for nid, score in ranked]
 
 
+def search_graph(
+    query: str,
+    k: int = 10,
+    type_filter: str | None = None,
+    neighbors_per_seed: int = 5,
+    edge_factor: float = 0.5,
+) -> list[dict]:
+    """Hybrid search, then expand each seed with its 1-hop wikilink neighbors.
+
+    Returns "the note AND its context": seeds ranked by hybrid relevance, plus the
+    notes one wikilink away (outbound + backlinks), scored as ``seed_score *
+    edge_factor`` and accumulated when reachable from multiple seeds. Bounded to
+    one hop, ``neighbors_per_seed`` per seed, and at most ``k`` graph neighbors
+    overall, so the result set never blows up.
+
+    Each result carries ``source`` ("seed" | "graph"); graph neighbors also carry
+    ``neighbor_of`` (the seed ids that pulled them in).
+    """
+    from . import vault
+
+    seeds = search_hybrid(query, k=k, type_filter=type_filter)
+    results: dict[str, dict] = {hit["id"]: {**hit, "source": "seed"} for hit in seeds}
+
+    neighbor_scores: dict[str, float] = {}
+    neighbor_of: dict[str, list[str]] = {}
+    for seed in seeds:
+        sid = seed["id"]
+        contribution = seed["score"] * edge_factor
+        edges = vault.links_of(sid)
+        candidates = [e["id"] for e in edges["outbound"] if not e["dangling"]]
+        candidates += [e["id"] for e in edges["inbound"]]
+
+        picked: list[str] = []
+        for nid in candidates:
+            if nid != sid and nid not in picked:
+                picked.append(nid)
+            if len(picked) >= neighbors_per_seed:
+                break
+
+        for nid in picked:
+            neighbor_scores[nid] = neighbor_scores.get(nid, 0.0) + contribution
+            neighbor_of.setdefault(nid, []).append(sid)
+
+    graph_items: list[dict] = []
+    for nid, score in neighbor_scores.items():
+        if nid in results:
+            # already surfaced as a seed — annotate provenance, keep its seed score
+            results[nid].setdefault("neighbor_of", []).extend(neighbor_of[nid])
+            continue
+        note = vault.find_note_by_id(nid)
+        if note is None:
+            continue
+        ntype = note.frontmatter.get("type")
+        if type_filter and ntype != type_filter:
+            continue
+        graph_items.append(
+            {
+                "id": nid,
+                "type": ntype,
+                "heading": None,
+                "snippet": vault._first_line(note.body),
+                "via": ["graph"],
+                "source": "graph",
+                "neighbor_of": neighbor_of[nid],
+                "score": round(score, 4),
+            }
+        )
+
+    graph_items.sort(key=lambda d: d["score"], reverse=True)
+    merged = list(results.values()) + graph_items[:k]
+    merged.sort(key=lambda d: d["score"], reverse=True)
+    return merged
+
+
 def _snippet(content: str, limit: int = 240) -> str:
     text = content.strip().replace("\n", " ")
     return text[:limit] + ("…" if len(text) > limit else "")
