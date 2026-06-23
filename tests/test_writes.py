@@ -45,6 +45,16 @@ def test_archive_creates_dir_before_stripping_refs(stub_reindex, monkeypatch):
     assert "[[victim]]" in vault.find_note_by_id("referrer").body
 
 
+def test_restore_note_roundtrip(stub_reindex, vault_root):
+    # archive then restore a legit id — the new SAFE_STEM_RE guard must not block it
+    writes.create_note("topic", "to-restore", {}, "content")
+    writes.archive_note("to-restore")
+    assert (vault_root / "_archive" / "to-restore.md").exists()
+    res = writes.restore_note("to-restore")
+    assert res["id"] == "to-restore"
+    assert vault.find_note_by_id("to-restore").frontmatter["status"] == "active"
+
+
 def test_run_reindex_fallback_without_script(monkeypatch):
     monkeypatch.setattr(writes, "REINDEX_SCRIPT", writes.REINDEX_SCRIPT.parent / "missing.sh")
     # no note_id -> skip path, never touches the embedder

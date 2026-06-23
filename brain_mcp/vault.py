@@ -313,7 +313,7 @@ def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]
     return _graph_cached(_vault_signature())
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=1)
 def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
     notes = list(iter_notes())
     ids = {n.id for n in notes}

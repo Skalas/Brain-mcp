@@ -15,6 +15,7 @@ from .vault import (
     DEFAULT_CONTEXT,
     MEETINGS_DIR,
     NOTES_DIR,
+    SAFE_STEM_RE,
     SYSTEM_DIR,
     VAULT_PATH,
     VaultError,
@@ -233,7 +234,10 @@ def archive_note(note_id: str, strip_refs: bool = False) -> dict:
 
 def restore_note(note_id: str, note_type: str | None = None) -> dict:
     """Move an archived note back to active (notes/), flip status to active, reindex."""
+    if not SAFE_STEM_RE.match(note_id):
+        raise VaultError(f"Invalid note id {note_id!r}.")
     src = ARCHIVE_DIR / f"{note_id}.md"
+    assert_inside_vault(src)  # belt-and-suspenders: never read/delete outside _archive/
     if not src.exists():
         raise VaultError(f"No archived note {note_id!r} in _archive/.")
     note = parse_note(src)
