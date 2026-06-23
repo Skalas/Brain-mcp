@@ -265,6 +265,43 @@ def search_hybrid(
 
 
 @mcp.tool()
+def search_graph(
+    query: str,
+    k: int = 10,
+    type: str | None = None,
+    neighbors_per_seed: int = 5,
+    edge_factor: float = 0.5,
+) -> list[dict]:
+    """Hybrid search expanded with the graph: returns matches AND their 1-hop context.
+
+    Runs hybrid search for seed notes, then pulls in the notes one wikilink away
+    (outbound links + backlinks) so related context surfaces alongside direct hits.
+    Use this when you want to follow a thread — "this topic and what connects to it"
+    — rather than only the closest text matches. For pure relevance, use
+    search_hybrid.
+
+    Each result has `source`: "seed" (a direct hit) or "graph" (pulled in via a
+    link); graph results carry `neighbor_of` listing the seed ids that surfaced them.
+    Neighbor scores are the seed score decayed by `edge_factor`, so seeds rank first
+    and context follows. Bounded to one hop and `neighbors_per_seed` per seed.
+
+    Args:
+        query: natural-language query.
+        k: max seed hits (and a cap on graph neighbors).
+        type: optional frontmatter type filter, applied to seeds and neighbors.
+        neighbors_per_seed: max 1-hop neighbors pulled per seed (default 5).
+        edge_factor: neighbor score = seed score * this (default 0.5; lower = less weight on context).
+    """
+    return vectors.search_graph(
+        query,
+        k=k,
+        type_filter=type,
+        neighbors_per_seed=neighbors_per_seed,
+        edge_factor=edge_factor,
+    )
+
+
+@mcp.tool()
 def reindex_vectors(full: bool = False, note_id: str | None = None) -> dict:
     """Rebuild the vector index.
 
