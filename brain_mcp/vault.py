@@ -262,6 +262,130 @@ def links_of(note_id: str) -> dict:
     return {"outbound": outbound, "inbound": inbound}
 
 
+MAX_NEIGHBORHOOD_DEPTH = 3
+MAX_NEIGHBORHOOD_NODES = 100
+
+
+def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
+    """Directed wikilink graph over active notes.
+
+    Returns ``(out_edges, in_edges, meta)``. Only edges whose target is an existing
+    active note are kept (dangling links dropped). ``meta[id]`` carries ``type`` and
+    ``title`` for node payloads. Walks the vault per call — always consistent with
+    the current files, no stale cache.
+    """
+    notes = list(iter_notes())
+    ids = {n.id for n in notes}
+    out: dict[str, set[str]] = {n.id: set() for n in notes}
+    inn: dict[str, set[str]] = {n.id: set() for n in notes}
+    meta: dict[str, dict] = {}
+    for note in notes:
+        meta[note.id] = {
+            "type": note.frontmatter.get("type"),
+            "title": note.frontmatter.get("title") or note.id,
+        }
+        for target in extract_outlinks(note.body):
+            if target in ids and target != note.id:
+                out[note.id].add(target)
+                inn[target].add(note.id)
+    return out, inn, meta
+
+
+def neighborhood(note_id: str, depth: int = 1) -> dict:
+    """Subgraph of notes within `depth` wikilink hops of `note_id`.
+
+    Edges are followed in both directions (a link counts whether it points to or
+    from a node). `depth` is clamped to [1, 3] and the node count to 100. Returns
+    ``{root, depth, nodes: [{id, distance, type, title}], edges: [{source, target}],
+    truncated}`` — edges preserve link direction within the returned node set.
+    """
+    out, inn, meta = _graph()
+    if note_id not in meta:
+        raise VaultError(f"Note {note_id!r} not found among active notes.")
+    depth = max(1, min(depth, MAX_NEIGHBORHOOD_DEPTH))
+
+    dist = {note_id: 0}
+    order = [note_id]
+    frontier = [note_id]
+    truncated = False
+    while frontier and not truncated:
+        nxt: list[str] = []
+        for cur in frontier:
+            if dist[cur] >= depth:
+                continue
+            for nb in out[cur] | inn[cur]:
+                if nb not in dist:
+                    dist[nb] = dist[cur] + 1
+                    order.append(nb)
+                    nxt.append(nb)
+                    if len(order) >= MAX_NEIGHBORHOOD_NODES:
+                        truncated = True
+                        break
+            if truncated:
+                break
+        frontier = nxt
+
+    node_set = set(order)
+    nodes = [{"id": i, "distance": dist[i], **meta[i]} for i in order]
+    edges = [
+        {"source": s, "target": t}
+        for s in node_set
+        for t in out[s]
+        if t in node_set
+    ]
+    return {
+        "root": note_id,
+        "depth": depth,
+        "nodes": nodes,
+        "edges": edges,
+        "truncated": truncated,
+    }
+
+
+def path_between(a: str, b: str) -> dict:
+    """Shortest wikilink path between two notes (links treated as undirected).
+
+    Returns ``{connected, length, path: [id, ...], nodes: [{id, type, title}]}``.
+    `length` is the hop count (0 when a == b); `connected` is False with an empty
+    path when no chain of links joins them.
+    """
+    out, inn, meta = _graph()
+    for note_id in (a, b):
+        if note_id not in meta:
+            raise VaultError(f"Note {note_id!r} not found among active notes.")
+    if a == b:
+        return {"connected": True, "length": 0, "path": [a], "nodes": [{"id": a, **meta[a]}]}
+
+    from collections import deque
+
+    prev: dict[str, str | None] = {a: None}
+    queue = deque([a])
+    while queue:
+        cur = queue.popleft()
+        if cur == b:
+            break
+        for nb in out[cur] | inn[cur]:
+            if nb not in prev:
+                prev[nb] = cur
+                queue.append(nb)
+
+    if b not in prev:
+        return {"connected": False, "length": None, "path": [], "nodes": []}
+
+    path: list[str] = []
+    cur: str | None = b
+    while cur is not None:
+        path.append(cur)
+        cur = prev[cur]
+    path.reverse()
+    return {
+        "connected": True,
+        "length": len(path) - 1,
+        "path": path,
+        "nodes": [{"id": i, **meta[i]} for i in path],
+    }
+
+
 def _first_line(body: str) -> str:
     for line in body.splitlines():
         line = line.strip()

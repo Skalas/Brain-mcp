@@ -66,6 +66,46 @@ def links_of(id: str) -> dict:
 
 
 @mcp.tool()
+def neighborhood(id: str, depth: int = 1) -> dict:
+    """Return the subgraph of notes within `depth` wikilink hops of a note.
+
+    Answers "what's around X" — the cluster of notes connected to this one. Links
+    are followed in both directions. Use this to explore a topic's surroundings;
+    use path_between to find how two specific notes connect.
+
+    Args:
+        id: note id (filename stem) to center on.
+        depth: hop radius, clamped to 1..3 (default 1).
+
+    Returns:
+        {root, depth, nodes: [{id, distance, type, title}], edges: [{source,
+        target}], truncated} — `distance` is hops from root; `edges` preserve link
+        direction within the returned nodes; `truncated` is true if the 100-node
+        cap was hit.
+    """
+    return vault.neighborhood(id, depth)
+
+
+@mcp.tool()
+def path_between(a: str, b: str) -> dict:
+    """Find the shortest wikilink path connecting two notes.
+
+    Answers "how do these two relate" — e.g. how a person connects to a project.
+    Links are treated as undirected for pathfinding.
+
+    Args:
+        a: source note id (filename stem).
+        b: target note id (filename stem).
+
+    Returns:
+        {connected, length, path: [id, ...], nodes: [{id, type, title}]} — `length`
+        is the hop count (0 if a == b); `connected` is false with an empty path when
+        no chain of links joins them.
+    """
+    return vault.path_between(a, b)
+
+
+@mcp.tool()
 def list_index(name: str) -> str:
     """Read a Map-of-Content (MOC). Allowed names: people, projects, topics, timeline, tags, README."""
     return vault.read_index(name)
