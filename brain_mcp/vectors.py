@@ -311,8 +311,17 @@ def search_hybrid(
     query: str,
     k: int = 10,
     type_filter: str | None = None,
+    structural_weight: float = 0.1,
 ) -> list[dict]:
-    """Reciprocal-rank-fusion of semantic + grep results."""
+    """Reciprocal-rank-fusion of semantic + grep results, with a structural nudge.
+
+    After fusing text-relevance ranks, each note's score is multiplied by
+    ``1 + structural_weight * centrality``, where centrality is normalized link
+    degree in [0, 1]. Well-connected hub notes get a small boost, so among notes of
+    near-equal textual relevance the better-connected one ranks higher. The weight
+    is small by default (nudge, not dominate); pass ``structural_weight=0`` to rank
+    on pure text relevance.
+    """
     from . import vault
 
     sem = search_semantic(query, k=k, type_filter=type_filter)
@@ -345,6 +354,11 @@ def search_hybrid(
                 "snippet": hit.get("snippet", ""),
                 "via": ["grep"],
             }
+
+    if structural_weight:
+        cen = vault.centrality()
+        for nid in scores:
+            scores[nid] *= 1.0 + structural_weight * cen.get(nid, 0.0)
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
     return [{**payload[nid], "score": round(score, 4)} for nid, score in ranked]
