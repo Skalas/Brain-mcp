@@ -1,6 +1,7 @@
 """Write operations: append, create, reindex."""
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -26,6 +27,8 @@ from .vault import (
     wikilink_re,
 )
 
+logger = logging.getLogger(__name__)
+
 REINDEX_SCRIPT = SYSTEM_DIR / "scripts" / "reindex.sh"
 SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -46,9 +49,27 @@ def validate_date(s: str) -> None:
         raise VaultError(f"Date {s!r} must be YYYY-MM-DD.")
 
 
+def _reindex_vectors_only(note_id: str | None) -> str:
+    """In-process vector reindex fallback when the external script is absent."""
+    if not note_id:
+        return "[reindex: skipped — no reindex script; MOCs not regenerated]"
+    try:
+        from . import vectors
+
+        vectors.reindex_note(note_id)
+        return "[reindex: vectors only — no reindex script, MOCs not regenerated]"
+    except Exception as exc:  # never block a write on the vector path
+        return f"[reindex: skipped — {exc}]"
+
+
 def run_reindex(note_id: str | None = None) -> str:
     if not REINDEX_SCRIPT.exists():
-        raise VaultError(f"reindex script missing at {REINDEX_SCRIPT}")
+        logger.warning(
+            "Reindex script missing (%s); falling back to in-process vector reindex. "
+            "MOCs/_index will not be regenerated.",
+            REINDEX_SCRIPT.name,
+        )
+        return _reindex_vectors_only(note_id)
     result = subprocess.run(
         ["bash", str(REINDEX_SCRIPT)],
         capture_output=True,

@@ -47,7 +47,10 @@ def _db() -> sqlite3.Connection:
     import sqlite_vec
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # check_same_thread=False + WAL: future-proofs against threaded tool dispatch
+    # and lets the external reindex process read concurrently without lock errors.
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -282,13 +285,16 @@ def search_semantic(
         (_to_blob(qvec), fetch),
     ).fetchall()
 
+    from . import vault
+
+    _, _, meta = vault._graph()  # cached; avoids a file read per KNN row for type
+
     out: list[dict] = []
     seen: set[str] = set()
     for note_id, section_idx, heading, content, distance in rows:
         if note_id in seen:
             continue
-        note = find_note_by_id(note_id)
-        note_type = note.frontmatter.get("type") if note else None
+        note_type = meta.get(note_id, {}).get("type")
         if type_filter and note_type != type_filter:
             continue
         seen.add(note_id)
@@ -387,14 +393,16 @@ def search_graph(
     seeds = search_hybrid(query, k=k, type_filter=type_filter)
     results: dict[str, dict] = {hit["id"]: {**hit, "source": "seed"} for hit in seeds}
 
+    # One cached adjacency build for all seeds, instead of a full vault scan per
+    # seed via links_of. out/inn already exclude dangling links.
+    out_edges, in_edges, meta = vault._graph()
+
     neighbor_scores: dict[str, float] = {}
     neighbor_of: dict[str, list[str]] = {}
     for seed in seeds:
         sid = seed["id"]
         contribution = seed["score"] * edge_factor
-        edges = vault.links_of(sid)
-        candidates = [e["id"] for e in edges["outbound"] if not e["dangling"]]
-        candidates += [e["id"] for e in edges["inbound"]]
+        candidates = list(out_edges.get(sid, ())) + list(in_edges.get(sid, ()))
 
         picked: list[str] = []
         for nid in candidates:
@@ -413,11 +421,11 @@ def search_graph(
             # already surfaced as a seed — annotate provenance, keep its seed score
             results[nid].setdefault("neighbor_of", []).extend(neighbor_of[nid])
             continue
+        ntype = meta.get(nid, {}).get("type")
+        if type_filter and ntype != type_filter:
+            continue
         note = vault.find_note_by_id(nid)
         if note is None:
-            continue
-        ntype = note.frontmatter.get("type")
-        if type_filter and ntype != type_filter:
             continue
         graph_items.append(
             {
