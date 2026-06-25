@@ -128,6 +128,36 @@ def get_doctrine() -> str:
 
 
 @mcp.tool()
+def get_consolidation_policy() -> str:
+    """Return the cross-agent consolidation coexistence policy (`_system/dream-policy.md`).
+
+    The single source of shared rules every independent consolidation agent
+    (Claude Code / dream, OpenClaw / Nico, Hermes) MUST obey when writing to this
+    vault or shared databases: section signatures, guardrail domains,
+    durable-vs-ephemeral (incl. coding-session mode), finance.db dedup, REM
+    propose-only, and ingest boundaries.
+
+    Call once per consolidation run, BEFORE writing. The returned text carries a
+    `policy_version` in its frontmatter — stamp it into the run journal so drift
+    is detectable. Each agent runs its OWN pipeline; this is the policy, not the
+    procedure.
+    """
+    return vault.read_consolidation_policy()
+
+
+@mcp.tool()
+def get_architecture() -> str:
+    """Return the knowledge-ecosystem architecture map (`_system/architecture.md`).
+
+    A reference map (not enforced): the SSOT/serving/writer topology, the
+    differentiated-ingestion registry (which agent ingests which sources, via
+    which stager, to where), what is centralized vs. local, and known gaps.
+    Read this to reason about coverage and boundaries.
+    """
+    return vault.read_architecture()
+
+
+@mcp.tool()
 def list_workflows() -> list[dict]:
     """List workflow recipes available in the vault.
 

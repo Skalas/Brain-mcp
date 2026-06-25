@@ -468,6 +468,22 @@ def read_doctrine() -> str:
     return path.read_text(encoding="utf-8")
 
 
+def read_consolidation_policy() -> str:
+    """Return the cross-agent consolidation policy (`_system/dream-policy.md`)."""
+    path = SYSTEM_DIR / "dream-policy.md"
+    if not path.exists():
+        raise VaultError("Consolidation policy (_system/dream-policy.md) is missing.")
+    return path.read_text(encoding="utf-8")
+
+
+def read_architecture() -> str:
+    """Return the ecosystem architecture map (`_system/architecture.md`)."""
+    path = SYSTEM_DIR / "architecture.md"
+    if not path.exists():
+        raise VaultError("Architecture map (_system/architecture.md) is missing.")
+    return path.read_text(encoding="utf-8")
+
+
 def list_workflows() -> list[dict]:
     """List workflow recipes (recipes without `kind:` frontmatter — those are kinds).
 
