@@ -35,7 +35,9 @@ VAULT_PATH="/Users/skalas/Documents/Obsidian Vault" uv run brain-mcp
 |---|---|
 | `get_doctrine()` | returns `_system/CLAUDE.md` — vault schema, write rules, language discipline. Call once per session before the first write. |
 | `list_workflows()` | catalog of multi-step workflow recipes (non-kind) under `_system/recipes/` |
-| `get_workflow(name)` | full body of a workflow recipe (e.g. `conversation-append-pass`, `function-first-project-rewrite`) |
+| `get_workflow(name)` | full body of a workflow recipe (e.g. `conversation-append-pass`, `dream-cycle`, `function-first-project-rewrite`) |
+| `get_consolidation_policy()` | returns `_system/dream-policy.md` — the cross-agent rules every consolidation ("dream") pass must obey before writing: attribution, guardrails, dedup, propose-only. See [docs/dreamcore.md](docs/dreamcore.md). |
+| `get_architecture()` | returns `_system/architecture.md` — ecosystem map + differentiated-ingestion registry (reference, not enforced). |
 
 ### Structured kinds
 
@@ -98,6 +100,16 @@ side_effects:
 ```
 
 Restart the MCP to pick up the new kind. The dynamic tools (`add_<kind>`, `find_<kind>`, etc.) appear automatically.
+
+## Multi-agent coexistence (DreamCore)
+
+Several agents (Claude Code, OpenClaw/Nico, Hermes) write to this one vault. They stay independent but inherit shared "dream"/consolidation decisions from **one place** — files in the vault, served by the tools above. Three roles:
+
+- **Policy** (`get_consolidation_policy()`) — the invariants every agent must obey.
+- **Instructivo** (`get_workflow("dream-cycle")`) — the canonical shape of a pass.
+- **Map** (`get_architecture()`) — who ingests what, and where it goes.
+
+Edit one file → every agent inherits it on its next run. No new server, no redeploy. See **[docs/dreamcore.md](docs/dreamcore.md)** for the full pattern and **[examples/](examples/)** for paste-ready templates.
 
 ## Vector search
 
