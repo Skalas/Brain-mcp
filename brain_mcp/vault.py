@@ -367,9 +367,10 @@ def personalized_pagerank(
 
     ``seeds`` maps note ids to weights (e.g. text-relevance scores); only positive
     weights on active notes contribute (zero/negative are ignored), and they are
-    normalized internally. Returns a
-    ``{note_id: score}`` dict over every active note, summing to ~1. An empty graph
-    returns ``{}``; seeds that resolve to no active note return all-zero scores.
+    normalized internally. Returns a ``{note_id: score}`` dict over every active
+    note; the scores sum to ~1 at convergence (mass is conserved each iteration).
+    An empty graph returns ``{}``; seeds that resolve to no active note return
+    all-zero scores.
 
     Backed by the cached graph, so repeated calls between writes are free.
     """
