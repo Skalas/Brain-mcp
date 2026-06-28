@@ -347,6 +347,66 @@ def centrality() -> dict[str, float]:
     return {note_id: deg / max_degree for note_id, deg in degree.items()}
 
 
+def personalized_pagerank(
+    seeds: dict[str, float],
+    *,
+    damping: float = 0.85,
+    max_iter: int = 100,
+    tol: float = 1e-6,
+) -> dict[str, float]:
+    """Personalized PageRank over the wikilink graph, restarting toward ``seeds``.
+
+    Edges are followed in both directions (a link counts whether it points to or
+    from a node), matching :func:`neighborhood` and :func:`path_between`. The
+    teleport mass goes to the seed distribution instead of uniformly, so the score
+    measures *proximity to the seeds*, not global popularity — a note one hop from
+    several seeds scores high even if it is a leaf overall.
+
+    ``seeds`` maps note ids to weights (e.g. text-relevance scores); only positive
+    weights on active notes contribute (zero/negative are ignored), and they are
+    normalized internally. Returns a
+    ``{note_id: score}`` dict over every active note, summing to ~1. An empty graph
+    returns ``{}``; seeds that resolve to no active note return all-zero scores.
+
+    Backed by the cached graph, so repeated calls between writes are free.
+    """
+    out, inn, meta = _graph()
+    nodes = list(meta)
+    if not nodes:
+        return {}
+
+    restart = {nid: w for nid, w in seeds.items() if nid in meta and w > 0}
+    total = sum(restart.values())
+    if total <= 0:
+        return {nid: 0.0 for nid in nodes}
+    restart = {nid: w / total for nid, w in restart.items()}
+
+    neighbors = {nid: out[nid] | inn[nid] for nid in nodes}
+    rank = {nid: restart.get(nid, 0.0) for nid in nodes}
+
+    for _ in range(max_iter):
+        nxt = {nid: (1.0 - damping) * restart.get(nid, 0.0) for nid in nodes}
+        dangling = 0.0
+        for nid in nodes:
+            deg = len(neighbors[nid])
+            if deg == 0:
+                # No outlets: its mass would vanish. Send it back through the
+                # restart distribution so total probability is conserved.
+                dangling += rank[nid]
+                continue
+            share = damping * rank[nid] / deg
+            for nb in neighbors[nid]:
+                nxt[nb] += share
+        if dangling:
+            for nid, w in restart.items():
+                nxt[nid] += damping * dangling * w
+        delta = sum(abs(nxt[nid] - rank[nid]) for nid in nodes)
+        rank = nxt
+        if delta < tol:
+            break
+    return rank
+
+
 def neighborhood(note_id: str, depth: int = 1) -> dict:
     """Subgraph of notes within `depth` wikilink hops of `note_id`.
 

@@ -320,33 +320,51 @@ def search_semantic(
     return out
 
 
+# Max connective notes (graph-only, not text hits) admitted as candidates,
+# as a multiple of k. Keeps the final result set bounded; PPR itself always
+# scans the whole graph regardless.
+_CONNECTIVE_FACTOR = 2
+
+
 def search_hybrid(
     query: str,
     k: int = 10,
     type_filter: str | None = None,
     structural_weight: float = 0.1,
 ) -> list[dict]:
-    """Reciprocal-rank-fusion of semantic + grep results, with a structural nudge.
+    """Reciprocal-rank fusion of semantic + grep, re-ranked by graph proximity.
 
-    After fusing text-relevance ranks, each note's score is multiplied by
-    ``1 + structural_weight * centrality``, where centrality is normalized link
-    degree in [0, 1]. Well-connected hub notes get a small boost, so among notes of
-    near-equal textual relevance the better-connected one ranks higher. The weight
-    is small by default (nudge, not dominate); pass ``structural_weight=0`` to rank
-    on pure text relevance.
+    Stage 1 fuses semantic and grep hits by reciprocal rank (the text signal —
+    these are the *entry points*). Stage 2, when ``structural_weight > 0``, runs a
+    personalized PageRank over the wikilink graph seeded on those hits (weighted by
+    their text score) and blends it in:
+
+        score = text_norm + structural_weight * ppr_norm
+
+    where both terms are normalized to ``[0, 1]``. This does two things the old
+    static-centrality nudge could not: it is *query-aware* (proximity to the hits,
+    not global popularity), and it can surface a **connective note** — one that
+    matches neither the text nor the embedding query but sits between several strong
+    hits. ``structural_weight`` controls the lean; raise it to trust the graph more.
+
+    Pass ``structural_weight=0`` to rank on pure text relevance — identical ordering
+    to the semantic+grep fusion alone, with no graph computation.
     """
     from . import vault
+
+    if k <= 0:
+        return []
 
     sem = search_semantic(query, k=k, type_filter=type_filter)
     grep = vault.search_notes(query, type_filter, None, k)
 
     rrf_k = 60
-    scores: dict[str, float] = {}
+    text_scores: dict[str, float] = {}
     payload: dict[str, dict] = {}
 
     for rank, hit in enumerate(sem):
         nid = hit["id"]
-        scores[nid] = scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
+        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
         payload[nid] = {
             "id": nid,
             "type": hit.get("type"),
@@ -356,7 +374,7 @@ def search_hybrid(
         }
     for rank, hit in enumerate(grep):
         nid = hit["id"]
-        scores[nid] = scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
+        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
         if nid in payload:
             payload[nid]["via"].append("grep")
         else:
@@ -368,10 +386,49 @@ def search_hybrid(
                 "via": ["grep"],
             }
 
-    if structural_weight:
-        cen = vault.centrality()
-        for nid in scores:
-            scores[nid] *= 1.0 + structural_weight * cen.get(nid, 0.0)
+    if not structural_weight or not text_scores:
+        ranked = sorted(text_scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
+        return [{**payload[nid], "score": round(score, 4)} for nid, score in ranked]
+
+    ppr = vault.personalized_pagerank(text_scores)
+    meta = vault._graph()[2]
+
+    # Connective candidates: notes the graph lifts but that the text never found.
+    # Take the highest-PPR such notes (bounded), respecting the type filter.
+    connective = sorted(
+        (
+            (nid, score)
+            for nid, score in ppr.items()
+            if nid not in text_scores
+            and score > 0.0
+            and (not type_filter or meta.get(nid, {}).get("type") == type_filter)
+        ),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )[: k * _CONNECTIVE_FACTOR]
+
+    text_max = max(text_scores.values())
+    candidates = set(text_scores) | {nid for nid, _ in connective}
+    ppr_max = max((ppr.get(nid, 0.0) for nid in candidates), default=0.0)
+
+    scores: dict[str, float] = {}
+    for nid in candidates:
+        text_norm = text_scores.get(nid, 0.0) / text_max
+        ppr_norm = ppr.get(nid, 0.0) / ppr_max if ppr_max else 0.0
+        scores[nid] = text_norm + structural_weight * ppr_norm
+
+    for nid, _ in connective:
+        note = vault.find_note_by_id(nid)
+        if note is None:
+            scores.pop(nid, None)
+            continue
+        payload[nid] = {
+            "id": nid,
+            "type": meta.get(nid, {}).get("type"),
+            "heading": None,
+            "snippet": vault._first_line(note.body),
+            "via": ["graph"],
+        }
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
     return [{**payload[nid], "score": round(score, 4)} for nid, score in ranked]
