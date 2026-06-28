@@ -136,7 +136,7 @@ def update(kind: Kind, id: str, patch: dict) -> dict:
 def complete(kind: Kind, id: str) -> dict:
     """Flip a living-list note's `state` to the first declared terminal state."""
     if kind.klass != "living-list":
-        raise VaultError(f"complete is only available for living-list kinds.")
+        raise VaultError("complete is only available for living-list kinds.")
     if not kind.terminal_states:
         raise VaultError(
             f"kind {kind.name!r} has no terminal_states declared; nothing to complete to."

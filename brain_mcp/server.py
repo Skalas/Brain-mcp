@@ -328,20 +328,21 @@ def search_hybrid(
     type: str | None = None,
     structural_weight: float = 0.1,
 ) -> list[dict]:
-    """Hybrid search: reciprocal-rank fusion of semantic + grep results.
+    """Hybrid search: semantic + grep fusion, re-ranked by graph proximity.
 
     Use this as the default search when you want both exact-string and conceptual recall.
 
-    Scores get a small structural nudge: well-connected hub notes (high wikilink
-    degree) rank slightly higher among near-equal text matches. Pass
-    structural_weight=0 to rank on pure text relevance, or raise it to lean harder
-    on graph connectivity.
+    Text hits (semantic + grep) are the entry points; a personalized PageRank over
+    the wikilink graph, seeded on those hits, then re-ranks them and can surface a
+    connective note — one matching neither the words nor the embedding query but
+    linked between several strong hits. Pass structural_weight=0 to rank on pure
+    text relevance (no graph step), or raise it to lean harder on connectivity.
 
     Args:
         query: text / natural-language query.
         k: max results.
         type: optional frontmatter type filter.
-        structural_weight: link-degree boost factor (default 0.1; 0 disables).
+        structural_weight: graph-proximity blend weight (default 0.1; 0 disables).
     """
     return vectors.search_hybrid(query, k=k, type_filter=type, structural_weight=structural_weight)
 
@@ -453,7 +454,7 @@ def _add_description(kind: kinds_mod.Kind) -> str:
     parts.append(f"Required fields in `data`: {list(kind.required_fields)}.")
     if kind.optional_fields:
         parts.append(f"Optional: {list(kind.optional_fields)}.")
-    parts.append(f"`body` is the freeform markdown content of the resulting note.")
+    parts.append("`body` is the freeform markdown content of the resulting note.")
     parts.append(f"For full instructions (enrichment, side effects, body shape), call get_recipe('{kind.name}').")
     return " ".join(parts)
 

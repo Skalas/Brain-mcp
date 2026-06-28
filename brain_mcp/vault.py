@@ -123,7 +123,7 @@ def search_notes(
     include_archived: bool = False,
 ) -> list[dict]:
     query_lower = query.lower()
-    hits: list[tuple[int, Note, str]] = []
+    hits: list[tuple[int, Note, str, str]] = []
 
     for note in iter_notes(include_archived=include_archived):
         if type_filter and note.frontmatter.get("type") != type_filter:
@@ -300,7 +300,7 @@ def _vault_signature() -> tuple:
     return tuple(sorted(sig))
 
 
-def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
+def _graph() -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, dict]]:
     """Directed wikilink graph over active notes.
 
     Returns ``(out_edges, in_edges, meta)``. Only edges whose target is an existing
@@ -308,13 +308,14 @@ def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]
     ``title`` for node payloads. Cached on a vault mtime signature, so it recomputes
     only when notes change — never stale, but not re-parsed on every query.
 
-    Callers must treat the returned structures as read-only (they are shared).
+    The edge sets are frozen: the result is shared across all callers (and the
+    ``maxsize=1`` cache), so it must stay immutable.
     """
     return _graph_cached(_vault_signature())
 
 
 @lru_cache(maxsize=1)
-def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
+def _graph_cached(_signature: tuple) -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, dict]]:
     notes = list(iter_notes())
     ids = {n.id for n in notes}
     out: dict[str, set[str]] = {n.id: set() for n in notes}
@@ -329,7 +330,9 @@ def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set
             if target in ids and target != note.id:
                 out[note.id].add(target)
                 inn[target].add(note.id)
-    return out, inn, meta
+    frozen_out = {nid: frozenset(targets) for nid, targets in out.items()}
+    frozen_in = {nid: frozenset(sources) for nid, sources in inn.items()}
+    return frozen_out, frozen_in, meta
 
 
 def centrality() -> dict[str, float]:
@@ -345,6 +348,67 @@ def centrality() -> dict[str, float]:
     if max_degree == 0:
         return {note_id: 0.0 for note_id in degree}
     return {note_id: deg / max_degree for note_id, deg in degree.items()}
+
+
+def personalized_pagerank(
+    seeds: dict[str, float],
+    *,
+    damping: float = 0.85,
+    max_iter: int = 100,
+    tol: float = 1e-6,
+) -> dict[str, float]:
+    """Personalized PageRank over the wikilink graph, restarting toward ``seeds``.
+
+    Edges are followed in both directions (a link counts whether it points to or
+    from a node), matching :func:`neighborhood` and :func:`path_between`. The
+    teleport mass goes to the seed distribution instead of uniformly, so the score
+    measures *proximity to the seeds*, not global popularity — a note one hop from
+    several seeds scores high even if it is a leaf overall.
+
+    ``seeds`` maps note ids to weights (e.g. text-relevance scores); only positive
+    weights on active notes contribute (zero/negative are ignored), and they are
+    normalized internally. Returns a ``{note_id: score}`` dict over every active
+    note; the scores sum to ~1 at convergence (mass is conserved each iteration).
+    An empty graph returns ``{}``; seeds that resolve to no active note return
+    all-zero scores.
+
+    Backed by the cached graph, so repeated calls between writes are free.
+    """
+    out, inn, meta = _graph()
+    nodes = list(meta)
+    if not nodes:
+        return {}
+
+    restart = {nid: w for nid, w in seeds.items() if nid in meta and w > 0}
+    total = sum(restart.values())
+    if total <= 0:
+        return {nid: 0.0 for nid in nodes}
+    restart = {nid: w / total for nid, w in restart.items()}
+
+    neighbors = {nid: out[nid] | inn[nid] for nid in nodes}
+    rank = {nid: restart.get(nid, 0.0) for nid in nodes}
+
+    for _ in range(max_iter):
+        nxt = {nid: (1.0 - damping) * restart.get(nid, 0.0) for nid in nodes}
+        dangling = 0.0
+        for nid in nodes:
+            deg = len(neighbors[nid])
+            if deg == 0:
+                # No outlets: its mass would vanish. Send it back through the
+                # restart distribution so total probability is conserved.
+                dangling += rank[nid]
+                continue
+            share = damping * rank[nid] / deg
+            for nb in neighbors[nid]:
+                nxt[nb] += share
+        if dangling:
+            for nid, w in restart.items():
+                nxt[nid] += damping * dangling * w
+        delta = sum(abs(nxt[nid] - rank[nid]) for nid in nodes)
+        rank = nxt
+        if delta < tol:
+            break
+    return rank
 
 
 def neighborhood(note_id: str, depth: int = 1) -> dict:
@@ -429,10 +493,10 @@ def path_between(a: str, b: str) -> dict:
         return {"connected": False, "length": None, "path": [], "nodes": []}
 
     path: list[str] = []
-    cur: str | None = b
-    while cur is not None:
-        path.append(cur)
-        cur = prev[cur]
+    node: str | None = b
+    while node is not None:
+        path.append(node)
+        node = prev[node]
     path.reverse()
     return {
         "connected": True,

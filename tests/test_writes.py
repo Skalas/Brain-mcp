@@ -7,7 +7,7 @@ from brain_mcp.vault import VaultError
 
 
 def test_create_note_defaults_work_context(stub_reindex):
-    res = writes.create_note("topic", "ctx-note", {}, "body")
+    writes.create_note("topic", "ctx-note", {}, "body")
     note = vault.find_note_by_id("ctx-note")
     assert note.frontmatter["context"] == "work"
     assert note.frontmatter["type"] == "topic"
@@ -22,7 +22,7 @@ def test_edit_note_unique_match_required(stub_reindex):
     writes.create_note("topic", "edit-me", {}, "alpha beta alpha")
     with pytest.raises(VaultError):  # appears twice
         writes.edit_note("edit-me", "alpha", "ZZZ")
-    res = writes.edit_note("edit-me", "beta", "BETA")
+    writes.edit_note("edit-me", "beta", "BETA")
     assert vault.find_note_by_id("edit-me").body.count("BETA") == 1
 
 

@@ -11,7 +11,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# Tooling for the metate gates (ruff check . && mypy . && pytest) — self-contained
+# so `uv sync --extra dev` is all a contributor needs.
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.8", "types-PyYAML>=6.0"]
 
 [project.scripts]
 brain-mcp = "brain_mcp.server:main"
@@ -21,6 +23,16 @@ brain-reindex = "brain_mcp.cli:reindex"
 testpaths = ["tests"]
 # vault.py reads VAULT_PATH at import; conftest sets it before collection.
 addopts = "-q"
+
+[tool.mypy]
+python_version = "3.11"
+# Tests use pytest fixtures / monkeypatch dynamics that don't repay static typing.
+exclude = ['^tests/']
+
+[[tool.mypy.overrides]]
+# Native extension + ML lib ship no type stubs.
+module = ["sqlite_vec", "fastembed"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["hatchling"]
