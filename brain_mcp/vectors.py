@@ -482,6 +482,9 @@ def search_graph(
     """
     from . import vault
 
+    if k <= 0:
+        return []
+
     seeds = search_hybrid(query, k=k, type_filter=type_filter)
     results: dict[str, dict] = {hit["id"]: {**hit, "source": "seed"} for hit in seeds}
 

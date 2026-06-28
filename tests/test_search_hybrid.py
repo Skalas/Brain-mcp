@@ -90,6 +90,9 @@ def test_non_positive_k_returns_empty(write_note, monkeypatch):
     _stub_text(monkeypatch, sem_ids=["a"], grep_ids=[])
     assert vectors.search_hybrid("q", k=0, structural_weight=0.5) == []
     assert vectors.search_hybrid("q", k=-1, structural_weight=0.5) == []
+    # search_graph wraps search_hybrid; the guard must hold there too.
+    assert vectors.search_graph("q", k=0) == []
+    assert vectors.search_graph("q", k=-1) == []
 
 
 def test_search_hybrid_reuses_cached_graph(write_note, monkeypatch):
