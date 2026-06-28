@@ -195,7 +195,9 @@ def reindex_note(note_id: str) -> dict:
                     "INSERT INTO chunks(note_id, section_idx, heading, content, content_hash) VALUES (?,?,?,?,?)",
                     (chunk.note_id, chunk.section_idx, chunk.heading, chunk.content, chunk.hash),
                 )
-                chunk_id = cur.lastrowid
+                new_id = cur.lastrowid
+                assert new_id is not None  # AUTOINCREMENT row just inserted
+                chunk_id = new_id
             conn.execute(
                 "INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)",
                 (chunk_id, _to_blob(vec)),
@@ -325,6 +327,64 @@ def search_semantic(
 # scans the whole graph regardless.
 _CONNECTIVE_FACTOR = 2
 
+# Standard RRF constant (Cormack & Clarke, 2009): smooths rank reciprocals so a
+# #1 hit scores 1/61 rather than 1.0, bounding any single ranker's influence.
+_RRF_K = 60
+
+
+def _fuse_rrf(sem: list[dict], grep: list[dict]) -> tuple[dict[str, float], dict[str, dict]]:
+    """Reciprocal-rank fusion of semantic + grep hits.
+
+    Returns ``(text_scores, payload)``: fused relevance per note id, and a result
+    payload carrying provenance (``via``: semantic / grep / both).
+    """
+    text_scores: dict[str, float] = {}
+    payload: dict[str, dict] = {}
+    for rank, hit in enumerate(sem):
+        nid = hit["id"]
+        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (_RRF_K + rank + 1)
+        payload[nid] = {
+            "id": nid,
+            "type": hit.get("type"),
+            "heading": hit.get("heading"),
+            "snippet": hit["snippet"],
+            "via": ["semantic"],
+        }
+    for rank, hit in enumerate(grep):
+        nid = hit["id"]
+        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (_RRF_K + rank + 1)
+        if nid in payload:
+            payload[nid]["via"].append("grep")
+        else:
+            payload[nid] = {
+                "id": nid,
+                "type": hit.get("type"),
+                "heading": None,
+                "snippet": hit.get("snippet", ""),
+                "via": ["grep"],
+            }
+    return text_scores, payload
+
+
+def _graph_hit_payload(nid: str, note_meta: dict[str, dict]) -> dict | None:
+    """Base result dict for a note surfaced by the graph (not a text hit).
+
+    Returns ``None`` if the note vanished between the graph snapshot and this read
+    (a write landed mid-query). Callers add any extra keys (source, score, …).
+    """
+    from . import vault
+
+    note = vault.find_note_by_id(nid)
+    if note is None:
+        return None
+    return {
+        "id": nid,
+        "type": note_meta.get(nid, {}).get("type"),
+        "heading": None,
+        "snippet": vault._first_line(note.body),
+        "via": ["graph"],
+    }
+
 
 def search_hybrid(
     query: str,
@@ -358,33 +418,7 @@ def search_hybrid(
     sem = search_semantic(query, k=k, type_filter=type_filter)
     grep = vault.search_notes(query, type_filter, None, k)
 
-    rrf_k = 60
-    text_scores: dict[str, float] = {}
-    payload: dict[str, dict] = {}
-
-    for rank, hit in enumerate(sem):
-        nid = hit["id"]
-        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
-        payload[nid] = {
-            "id": nid,
-            "type": hit.get("type"),
-            "heading": hit.get("heading"),
-            "snippet": hit["snippet"],
-            "via": ["semantic"],
-        }
-    for rank, hit in enumerate(grep):
-        nid = hit["id"]
-        text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (rrf_k + rank + 1)
-        if nid in payload:
-            payload[nid]["via"].append("grep")
-        else:
-            payload[nid] = {
-                "id": nid,
-                "type": hit.get("type"),
-                "heading": None,
-                "snippet": hit.get("snippet", ""),
-                "via": ["grep"],
-            }
+    text_scores, payload = _fuse_rrf(sem, grep)
 
     if not structural_weight or not text_scores:
         ranked = sorted(text_scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
@@ -418,17 +452,11 @@ def search_hybrid(
         scores[nid] = text_norm + structural_weight * ppr_norm
 
     for nid, _ in connective:
-        note = vault.find_note_by_id(nid)
-        if note is None:
+        hit_payload = _graph_hit_payload(nid, meta)
+        if hit_payload is None:
             scores.pop(nid, None)
             continue
-        payload[nid] = {
-            "id": nid,
-            "type": meta.get(nid, {}).get("type"),
-            "heading": None,
-            "snippet": vault._first_line(note.body),
-            "via": ["graph"],
-        }
+        payload[nid] = hit_payload
 
     ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
     return [{**payload[nid], "score": round(score, 4)} for nid, score in ranked]
@@ -489,16 +517,12 @@ def search_graph(
         ntype = meta.get(nid, {}).get("type")
         if type_filter and ntype != type_filter:
             continue
-        note = vault.find_note_by_id(nid)
-        if note is None:
+        hit_payload = _graph_hit_payload(nid, meta)
+        if hit_payload is None:
             continue
         graph_items.append(
             {
-                "id": nid,
-                "type": ntype,
-                "heading": None,
-                "snippet": vault._first_line(note.body),
-                "via": ["graph"],
+                **hit_payload,
                 "source": "graph",
                 "neighbor_of": neighbor_of[nid],
                 "score": round(score, 4),

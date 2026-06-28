@@ -123,7 +123,7 @@ def search_notes(
     include_archived: bool = False,
 ) -> list[dict]:
     query_lower = query.lower()
-    hits: list[tuple[int, Note, str]] = []
+    hits: list[tuple[int, Note, str, str]] = []
 
     for note in iter_notes(include_archived=include_archived):
         if type_filter and note.frontmatter.get("type") != type_filter:
@@ -300,7 +300,7 @@ def _vault_signature() -> tuple:
     return tuple(sorted(sig))
 
 
-def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
+def _graph() -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, dict]]:
     """Directed wikilink graph over active notes.
 
     Returns ``(out_edges, in_edges, meta)``. Only edges whose target is an existing
@@ -308,13 +308,14 @@ def _graph() -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]
     ``title`` for node payloads. Cached on a vault mtime signature, so it recomputes
     only when notes change — never stale, but not re-parsed on every query.
 
-    Callers must treat the returned structures as read-only (they are shared).
+    The edge sets are frozen: the result is shared across all callers (and the
+    ``maxsize=1`` cache), so it must stay immutable.
     """
     return _graph_cached(_vault_signature())
 
 
 @lru_cache(maxsize=1)
-def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict]]:
+def _graph_cached(_signature: tuple) -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]], dict[str, dict]]:
     notes = list(iter_notes())
     ids = {n.id for n in notes}
     out: dict[str, set[str]] = {n.id: set() for n in notes}
@@ -329,7 +330,9 @@ def _graph_cached(_signature: tuple) -> tuple[dict[str, set[str]], dict[str, set
             if target in ids and target != note.id:
                 out[note.id].add(target)
                 inn[target].add(note.id)
-    return out, inn, meta
+    frozen_out = {nid: frozenset(targets) for nid, targets in out.items()}
+    frozen_in = {nid: frozenset(sources) for nid, sources in inn.items()}
+    return frozen_out, frozen_in, meta
 
 
 def centrality() -> dict[str, float]:
@@ -489,10 +492,10 @@ def path_between(a: str, b: str) -> dict:
         return {"connected": False, "length": None, "path": [], "nodes": []}
 
     path: list[str] = []
-    cur: str | None = b
-    while cur is not None:
-        path.append(cur)
-        cur = prev[cur]
+    node: str | None = b
+    while node is not None:
+        path.append(node)
+        node = prev[node]
     path.reverse()
     return {
         "connected": True,
