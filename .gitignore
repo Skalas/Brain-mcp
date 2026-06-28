@@ -9,3 +9,12 @@ dist/
 # local vector index — per-machine, regenerated via reindex_vectors(full=True)
 .vectors.db
 .vectors.db-*
+
+# metate session handoff
+.metate/session.json
+# metate issue ledger
+.metate/issues.json
+# metate profile reconcile backups
+.metate/*.bak
+# codebase-memory Cursor rule is installed tooling (source: metate repo)
+.cursor/rules/codebase-memory.mdc
