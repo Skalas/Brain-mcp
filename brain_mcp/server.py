@@ -326,7 +326,7 @@ def search_hybrid(
     query: str,
     k: int = 10,
     type: str | None = None,
-    structural_weight: float = 0.1,
+    structural_weight: float = 0.3,
 ) -> list[dict]:
     """Hybrid search: semantic + grep fusion, re-ranked by graph proximity.
 
@@ -342,7 +342,7 @@ def search_hybrid(
         query: text / natural-language query.
         k: max results.
         type: optional frontmatter type filter.
-        structural_weight: graph-proximity blend weight (default 0.1; 0 disables).
+        structural_weight: graph-proximity blend weight (default 0.3; 0 disables).
     """
     return vectors.search_hybrid(query, k=k, type_filter=type, structural_weight=structural_weight)
 

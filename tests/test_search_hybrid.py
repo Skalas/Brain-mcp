@@ -53,6 +53,16 @@ def test_weight_zero_no_connective_injection(write_note, monkeypatch):
 # ---------- T4: connective-note recall (the payoff) ----------
 
 
+def test_connective_note_surfaces_at_default_weight(write_note, monkeypatch):
+    for nid in ("a", "b", "c"):
+        write_note("notes", nid, {"type": "topic"}, "body")
+    write_note("notes", "bridge", {"type": "topic"}, "[[a]] [[b]] [[c]]")
+    _stub_text(monkeypatch, sem_ids=["a", "b", "c"], grep_ids=[])
+
+    res = vectors.search_hybrid("q", k=10)
+    assert "bridge" in {r["id"] for r in res}
+
+
 def test_connective_note_surfaces_with_graph_weight(write_note, monkeypatch):
     # a, b, c are strong text hits; `bridge` matches no query text but links them.
     for nid in ("a", "b", "c"):

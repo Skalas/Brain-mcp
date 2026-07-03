@@ -117,7 +117,7 @@ Local-only semantic search via `sqlite-vec` + `fastembed` (`intfloat/multilingua
 
 - Vectors live in `<repo>/.vectors.db` (gitignored — per-machine, regenerated via `reindex_vectors(full=True)`). Override with `BRAIN_VECTOR_DB`.
 - Model defaults to `intfloat/multilingual-e5-large` (override with `BRAIN_EMBED_MODEL` / `BRAIN_EMBED_DIM`).
-- Chunking is per H2 section; a preamble chunk includes title/aliases/tags so frontmatter is searchable.
+- Chunking is per H2 section (plus a preamble chunk carrying title/aliases/tags so frontmatter is searchable). Sections that exceed a size ceiling are sub-split (H3 → paragraph → sliding window with overlap) so content past the embedding model's ~512-token limit stays retrievable; a per-note chunk cap bounds pathological notes. Search surfaces these as sub-chunk `section_idx` values.
 - Writes auto re-embed the affected note; only sections whose content hash changed are re-encoded.
 - First-run bootstrap: call `reindex_vectors()` once after install — walks the vault and embeds everything.
 
@@ -135,7 +135,9 @@ VAULT_PATH="…" uv run brain-reindex --note kavak-pricing-q1
 
 # Drop the vector store and re-embed from scratch.
 # Run once per machine after an embedding-model pooling/dimension change
-# (e.g. fastembed switching multilingual-e5-large from CLS to mean pooling).
+# (e.g. fastembed switching multilingual-e5-large from CLS to mean pooling),
+# OR after a chunking-strategy change (e.g. the section sub-splitting above) —
+# existing vaults only benefit from the new chunking once re-embedded.
 VAULT_PATH="…" uv run brain-reindex --rebuild
 ```
 
