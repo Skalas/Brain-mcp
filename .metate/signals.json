@@ -1,6 +1,16 @@
 {
   "signals": [
     {
+      "title": "TOP PRIORITY: search finds the right sub-chunk but there is no way to read just that section — read_note dumps the whole note, forcing grep on raw caches OUTSIDE the MCP.",
+      "repro": "In a live session ask the brain a question whose answer lives deep in a large note (e.g. ORBIS BOS release plan, ~byte 90k of orbis-bos, 351 KB). search_semantic correctly returns the note at a deep section_idx (e.g. 40002), but the result carries only a 240-char snippet + heading, not the sub-chunk body. read_note returns the entire note as a single-line body, so the agent falls back to Bash grep/Python over .claude/ tool-result cache files to extract the section.",
+      "evidence": "Live post-ship test (retrieval-recall-correctness): answer was correct (18 P0 Demo / 24 P1 Piloto / 12 SCOR epics) but only after read_note(351 KB) + manual grep/Python on cached tool-results — the read half happened outside the brain-mcp entirely. Sprint fixed findability (T1/T2) but exposed the readability gap.",
+      "attribution": "out-of-diff",
+      "severityGuess": "S1",
+      "blocksDoD": false,
+      "foundIn": "live-test:orbis-bos",
+      "status": "open"
+    },
+    {
       "title": "search_semantic over-fetch factor is an inline magic number (k * 4), breaking the module's 'named tunables' convention.",
       "repro": "Read brain_mcp/vectors.py search_semantic: `fetch = k * 4` is a literal, while every other knob (_CONNECTIVE_FACTOR, _RRF_K, _SUB_IDX_SCALE, _SPLIT_OVERLAP, _MAX_SUB_CHUNKS) is a named module constant.",
       "evidence": "refactorer review round 1: 'The module names every other tuning knob but the over-fetch factor is an inline literal.'",
