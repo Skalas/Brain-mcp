@@ -27,6 +27,7 @@ VAULT_PATH="/Users/skalas/Documents/Obsidian Vault" uv run brain-mcp
 | `search_semantic(query, k, type?)` | vector search over note sections using local `multilingual-e5-large` embeddings |
 | `search_hybrid(query, k, type?)` | reciprocal-rank fusion of `search_notes` + `search_semantic` |
 | `read_note(id)` | full note content + parsed frontmatter |
+| `read_section(id, section_idx)` | just the sub-chunk a search hit pointed to — heading + full section body, not the snippet or the whole note. Semantic/hybrid results carry the `(id, section_idx)` locator; pass them here to read the matched slice of a large note without pulling the entire file |
 | `list_index(name)` | dump a MOC (`people`, `projects`, `topics`, `timeline`, `tags`, `README`) |
 
 ### Doctrine & workflows
@@ -117,7 +118,7 @@ Local-only semantic search via `sqlite-vec` + `fastembed` (`intfloat/multilingua
 
 - Vectors live in `<repo>/.vectors.db` (gitignored — per-machine, regenerated via `reindex_vectors(full=True)`). Override with `BRAIN_VECTOR_DB`.
 - Model defaults to `intfloat/multilingual-e5-large` (override with `BRAIN_EMBED_MODEL` / `BRAIN_EMBED_DIM`).
-- Chunking is per H2 section (plus a preamble chunk carrying title/aliases/tags so frontmatter is searchable). Sections that exceed a size ceiling are sub-split (H3 → paragraph → sliding window with overlap) so content past the embedding model's ~512-token limit stays retrievable; a per-note chunk cap bounds pathological notes. Search surfaces these as sub-chunk `section_idx` values.
+- Chunking is per H2 section (plus a preamble chunk carrying title/aliases/tags so frontmatter is searchable). Sections that exceed a size ceiling are sub-split (H3 → paragraph → sliding window with overlap) so content past the embedding model's ~512-token limit stays retrievable; a per-note chunk cap bounds pathological notes. Search surfaces these as sub-chunk `section_idx` values, and `read_section(id, section_idx)` reads that exact slice back — so a deep section of a large note is both findable and readable without loading the whole file.
 - Writes auto re-embed the affected note; only sections whose content hash changed are re-encoded.
 - First-run bootstrap: call `reindex_vectors()` once after install — walks the vault and embeds everything.
 

@@ -8,7 +8,7 @@
       "severityGuess": "S1",
       "blocksDoD": false,
       "foundIn": "live-test:orbis-bos",
-      "status": "open"
+      "status": "promoted"
     },
     {
       "title": "search_semantic over-fetch factor is an inline magic number (k * 4), breaking the module's 'named tunables' convention.",
@@ -18,7 +18,7 @@
       "severityGuess": "S3",
       "blocksDoD": false,
       "foundIn": "review:R1-design",
-      "status": "open"
+      "status": "promoted"
     },
     {
       "title": "Unreachable defensive fallback branch in _split_oversized (dead code that reads as live logic).",
@@ -28,7 +28,7 @@
       "severityGuess": "S3",
       "blocksDoD": false,
       "foundIn": "review:R1-design",
-      "status": "open"
+      "status": "promoted"
     },
     {
       "title": "_neighbor_key closure is redefined every loop iteration in search_graph though it closes over nothing loop-variant.",
@@ -38,7 +38,7 @@
       "severityGuess": "S3",
       "blocksDoD": false,
       "foundIn": "review:R1-design",
-      "status": "open"
+      "status": "promoted"
     },
     {
       "title": "The `num_parts >= _SUB_IDX_SCALE` (>=1000) guard in _section_indices is dead code on the production path.",
@@ -48,7 +48,7 @@
       "severityGuess": "S3",
       "blocksDoD": false,
       "foundIn": "review:R2-security",
-      "status": "open"
+      "status": "promoted"
     },
     {
       "title": "The `if len(seed_list) > k` branch in search_graph is currently unreachable (search_hybrid already returns <= k seeds).",
@@ -58,7 +58,7 @@
       "severityGuess": "S3",
       "blocksDoD": false,
       "foundIn": "review:extra-verify",
-      "status": "open"
+      "status": "promoted"
     }
   ]
 }
