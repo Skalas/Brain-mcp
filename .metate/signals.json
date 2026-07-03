@@ -1,0 +1,54 @@
+{
+  "signals": [
+    {
+      "title": "search_semantic over-fetch factor is an inline magic number (k * 4), breaking the module's 'named tunables' convention.",
+      "repro": "Read brain_mcp/vectors.py search_semantic: `fetch = k * 4` is a literal, while every other knob (_CONNECTIVE_FACTOR, _RRF_K, _SUB_IDX_SCALE, _SPLIT_OVERLAP, _MAX_SUB_CHUNKS) is a named module constant.",
+      "evidence": "refactorer review round 1: 'The module names every other tuning knob but the over-fetch factor is an inline literal.'",
+      "attribution": "in-diff",
+      "severityGuess": "S3",
+      "blocksDoD": false,
+      "foundIn": "review:R1-design",
+      "status": "open"
+    },
+    {
+      "title": "Unreachable defensive fallback branch in _split_oversized (dead code that reads as live logic).",
+      "repro": "In _split_oversized, the final `else: _sliding_window(part, ...)` branch cannot trigger because every producer (_split_on_pattern, _pack_paragraphs) already guarantees output <= limit.",
+      "evidence": "refactorer review round 1: branch unreachable given current callers; suggest removing or reframing as an assertion.",
+      "attribution": "in-diff",
+      "severityGuess": "S3",
+      "blocksDoD": false,
+      "foundIn": "review:R1-design",
+      "status": "open"
+    },
+    {
+      "title": "_neighbor_key closure is redefined every loop iteration in search_graph though it closes over nothing loop-variant.",
+      "repro": "In search_graph, `_neighbor_key` is defined inside `for seed in seeds:` but only reads loop-invariant out_edges/in_edges; hoist above the loop or make it module-level.",
+      "evidence": "refactorer review round 1: reads as if the sort key depends on the current seed, which it does not.",
+      "attribution": "in-diff",
+      "severityGuess": "S3",
+      "blocksDoD": false,
+      "foundIn": "review:R1-design",
+      "status": "open"
+    },
+    {
+      "title": "The `num_parts >= _SUB_IDX_SCALE` (>=1000) guard in _section_indices is dead code on the production path.",
+      "repro": "_emit_chunks truncates body_parts to _MAX_SUB_CHUNKS (512) before calling _section_indices, and 512 < 1000, so the >=1000 raise is only reachable via direct/test calls, never through chunk_note.",
+      "evidence": "security-auditor review round 2 (suggestion): reachable only in test_section_indices_raises_too_many_parts; add a comment noting it's not load-bearing in production.",
+      "attribution": "in-diff",
+      "severityGuess": "S3",
+      "blocksDoD": false,
+      "foundIn": "review:R2-security",
+      "status": "open"
+    },
+    {
+      "title": "The `if len(seed_list) > k` branch in search_graph is currently unreachable (search_hybrid already returns <= k seeds).",
+      "repro": "search_graph builds `results` 1:1 from `seeds = search_hybrid(query, k=k, ...)`, which internally returns sorted(...)[:k]; so len(seed_list) can never exceed k. The truncation branch is untested/unexercised, but is the only guard if search_hybrid's contract ever changes to over-return.",
+      "evidence": "code-reviewer extra-round verify (suggestion): harmless today, unexercised by any test.",
+      "attribution": "in-diff",
+      "severityGuess": "S3",
+      "blocksDoD": false,
+      "foundIn": "review:extra-verify",
+      "status": "open"
+    }
+  ]
+}

@@ -3,13 +3,16 @@
 # bootstrap.sh fills in the gates from detected tooling — adjust everything else.
 
 # --- gates ---------------------------------------------------------------
-fastGate: "ruff check . && pytest"   # quick loop, run after each review round
-shipGate: "ruff check . && mypy . && pytest"   # full pre-PR gate (mirrors CI)
+# Run tools INSIDE the project env (uv run --extra dev) — `uvx`/bare invocations
+# lack the project's deps + stubs (types-PyYAML, mcp), which makes mypy falsely red.
+fastGate: "uv run --extra dev ruff check . && uv run --extra dev pytest"   # quick loop, run after each review round
+shipGate: "uv run --extra dev ruff check . && uv run --extra dev mypy . && uv run --extra dev pytest"   # full pre-PR gate (mirrors CI)
 
 # --- implementer (the only writer) ---------------------------------------
 implementer:
   backend: cursor          # cursor | codex | claude | gemini
   model: ""                # e.g. composer-2.5 | gpt-5.3-codex-fast (blank = adapter default)
+  autonomous: false        # claude backend only. true → bootstrap whitelists `Bash(claude -p:*)`
 
 sessionFile: ".metate/session.json"
 issueLedger: ".metate/issues.json"   # issues filed by prep, read by ship for auto-close
@@ -62,10 +65,22 @@ smoke:
 # --- aftercare (metate-aftercare) -----------------------------------------
 # Deliverables to create/update at sprint close. Use {N} for the sprint number.
 aftercare:
-  deliverables: []         # e.g. ["docs/handoff/post-sprint-{N}.md", "CHANGELOG.md"]
+  deliverables:            # close-out docs updated on the branch, shipped in the PR
+    - "README.md"                              # keep vector-search/behavior docs accurate
+    - "docs/handoff/post-sprint-{N}.md"        # what shipped, limits, deferred debt, next-sprint pointers
 
 # --- ship (metate-ship) ---------------------------------------------------
 ship:
   prTarget: main           # PR target; set to `dev` if you gitflow (match baseBranch)
   commitStyle: "conventional, bisectable, one per layer"
   issueCloseKeyword: "Closes"   # PR body keyword for auto-close
+orchestrator:
+  backend: claude          # claude | codex | cursor
+discover:
+  signals:                 # which sources to sweep for candidate work
+    aftercare: true        # last sprint's deliverables (roadmap, next-sprint pointers) — the loop-closing input
+    codebaseMemory: true   # graph: dead code, high fan-out, churn, coverage gaps (needs codebaseMemory.enabled)
+    issues: true           # open gh issues + techDebtFile items whose trigger has fired
+    gitHistory: true       # churn hotspots + TODO/FIXME/HACK scan (cheapest, noisiest)
+  planFile: ".metate/plan.md"   # discover writes here; prep reads it as its entry doc
+  candidates: 5            # how many ranked candidates to propose
