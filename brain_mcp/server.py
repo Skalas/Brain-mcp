@@ -385,6 +385,25 @@ def search_graph(
 
 
 @mcp.tool()
+def read_section(id: str, section_idx: int) -> dict:
+    """Read just the note section a search hit pointed to.
+
+    Semantic/hybrid search results carry a `(id, section_idx)` locator. Pass them
+    here to get back the exact sub-chunk that matched — its heading and full section
+    body — instead of the 240-char snippet or the whole (possibly huge) note. This is
+    the read half of search: locate with search_*, then read_section the slice.
+
+    For whole-note reads (or grep/graph hits, whose `section_idx` is null), use
+    read_note instead.
+
+    Args:
+        id: note id (the `id` field of a search result).
+        section_idx: the `section_idx` field of that same search result.
+    """
+    return vectors.read_section(id, section_idx)
+
+
+@mcp.tool()
 def reindex_vectors(full: bool = False, note_id: str | None = None) -> dict:
     """Rebuild the vector index.
 

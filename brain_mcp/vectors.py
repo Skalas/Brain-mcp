@@ -488,6 +488,33 @@ def reindex_all(prune: bool = True) -> dict:
 # ---------- search ----------
 
 
+def read_section(note_id: str, section_idx: int) -> dict:
+    """Return just the sub-chunk a search hit pointed to.
+
+    Search results carry a ``(note_id, section_idx)`` locator; this reads back the
+    exact chunk that was embedded and scored — heading + full section body — instead
+    of the 240-char snippet or the whole note. Raises ``ValueError`` when the note or
+    the section is unknown (e.g. the index moved on since the search).
+    """
+    conn = _db()
+    row = conn.execute(
+        "SELECT heading, content FROM chunks WHERE note_id = ? AND section_idx = ?",
+        (note_id, section_idx),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"No indexed section {section_idx} for note {note_id!r}. "
+            "The locator may be stale (re-run search) or the note may be unindexed."
+        )
+    heading, content = row
+    return {
+        "id": note_id,
+        "section_idx": section_idx,
+        "heading": heading,
+        "content": content,
+    }
+
+
 # search_semantic over-fetches: dedup-by-note_id shrinks the KNN row list, and the
 # type filter is applied post-fetch, so both paths need headroom to still yield k.
 _OVERFETCH_FACTOR = 4
@@ -568,6 +595,9 @@ def _fuse_rrf(sem: list[dict], grep: list[dict]) -> tuple[dict[str, float], dict
         text_scores[nid] = text_scores.get(nid, 0.0) + 1.0 / (_RRF_K + rank + 1)
         payload[nid] = {
             "id": nid,
+            # section_idx locates the exact sub-chunk that matched, so the caller can
+            # read_section() it. Only semantic hits carry one; grep/graph are None.
+            "section_idx": hit.get("section_idx"),
             "type": hit.get("type"),
             "heading": hit.get("heading"),
             "snippet": hit["snippet"],
@@ -581,6 +611,7 @@ def _fuse_rrf(sem: list[dict], grep: list[dict]) -> tuple[dict[str, float], dict
         else:
             payload[nid] = {
                 "id": nid,
+                "section_idx": None,
                 "type": hit.get("type"),
                 "heading": None,
                 "snippet": hit.get("snippet", ""),
@@ -602,6 +633,8 @@ def _graph_hit_payload(nid: str, note_meta: dict[str, dict]) -> dict | None:
         return None
     return {
         "id": nid,
+        # Graph-only hits are whole-note (no matched sub-chunk); use read_note, not read_section.
+        "section_idx": None,
         "type": note_meta.get(nid, {}).get("type"),
         "heading": None,
         "snippet": vault._first_line(note.body),
