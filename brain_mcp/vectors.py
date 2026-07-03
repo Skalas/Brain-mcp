@@ -201,13 +201,18 @@ def _split_oversized(text: str, *, limit: int = MAX_CHUNK_CHARS) -> list[str]:
         else:
             parts.extend(_pack_paragraphs(h3_part, limit=limit))
 
-    final: list[str] = []
-    for part in parts:
-        if len(part) <= limit:
-            final.append(part)
-        else:
-            final.extend(_sliding_window(part, limit=limit))
-    return final
+    # Both producers above already guarantee every part <= limit
+    # (_pack_paragraphs falls back to _sliding_window internally), so the old
+    # re-split fallback here was dead. Keep a hard backstop against a future
+    # producer regression — raise (not assert) to match _section_indices' guard
+    # style and survive `python -O`, rather than re-splitting a bounded part.
+    oversized = [len(part) for part in parts if len(part) > limit]
+    if oversized:
+        raise RuntimeError(
+            f"_split_oversized producer emitted {len(oversized)} part(s) over "
+            f"limit {limit}: sizes {oversized}"
+        )
+    return parts
 
 
 def _section_indices(
@@ -219,6 +224,9 @@ def _section_indices(
 ) -> list[int]:
     """Map sub-parts to stable ``section_idx`` values (respects UNIQUE per note)."""
     prefix = f"note {note_id!r}: " if note_id else ""
+    # Not load-bearing on the production path: _emit_chunks caps body_parts at
+    # _MAX_SUB_CHUNKS (512) < _SUB_IDX_SCALE (1000) before calling here, so this
+    # raise is only reachable via direct/test calls. Kept as a hard invariant guard.
     if num_parts >= _SUB_IDX_SCALE:
         raise RuntimeError(
             f"{prefix}cannot split section {base_idx} into {num_parts} sub-chunks "
@@ -480,6 +488,11 @@ def reindex_all(prune: bool = True) -> dict:
 # ---------- search ----------
 
 
+# search_semantic over-fetches: dedup-by-note_id shrinks the KNN row list, and the
+# type filter is applied post-fetch, so both paths need headroom to still yield k.
+_OVERFETCH_FACTOR = 4
+
+
 def search_semantic(
     query: str,
     k: int = 10,
@@ -487,9 +500,7 @@ def search_semantic(
 ) -> list[dict]:
     conn = _db()
     qvec = _embed([query], kind="query")[0]
-    # Over-fetch because dedup-by-note_id shrinks the KNN row list; type filter
-    # is applied after fetch so we need headroom in both paths.
-    fetch = k * 4
+    fetch = k * _OVERFETCH_FACTOR
     rows = conn.execute(
         """
         SELECT c.note_id, c.section_idx, c.heading, c.content, v.distance
@@ -709,6 +720,12 @@ def search_graph(
     # seed via links_of. out/inn already exclude dangling links.
     out_edges, in_edges, meta = vault._graph()
 
+    # Deterministic neighbor ordering: highest-degree first, id as tiebreak. Closes
+    # over the loop-invariant edge maps only, so it is defined once, not per seed.
+    def _neighbor_key(nid: str) -> tuple[int, str]:
+        degree = len(out_edges.get(nid, ())) + len(in_edges.get(nid, ()))
+        return (-degree, nid)
+
     neighbor_scores: dict[str, float] = {}
     neighbor_of: dict[str, list[str]] = {}
     for seed in seeds:
@@ -717,10 +734,6 @@ def search_graph(
         outbound = out_edges.get(sid, frozenset())
         inbound = in_edges.get(sid, frozenset())
         candidates = (outbound | inbound) - {sid}
-
-        def _neighbor_key(nid: str) -> tuple[int, str]:
-            degree = len(out_edges.get(nid, ())) + len(in_edges.get(nid, ()))
-            return (-degree, nid)
 
         picked = sorted(candidates, key=_neighbor_key)[:neighbors_per_seed]
 
@@ -751,6 +764,9 @@ def search_graph(
 
     graph_items.sort(key=lambda d: d["score"], reverse=True)
     seed_list = sorted(results.values(), key=lambda d: d["score"], reverse=True)
+    # Defensive: search_hybrid already returns <= k seeds today, so this does not
+    # trigger on the current path. Kept as the only guard if that contract ever
+    # changes to over-return — seeds must still respect the k ceiling.
     if len(seed_list) > k:
         seed_list = seed_list[:k]
     remaining = k - len(seed_list)
