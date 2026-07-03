@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import sqlite3
@@ -16,15 +17,41 @@ from .vault import (
     iter_notes,
 )
 
+logger = logging.getLogger(__name__)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EMBED_MODEL = os.environ.get("BRAIN_EMBED_MODEL", "intfloat/multilingual-e5-large")
 EMBED_DIM = int(os.environ.get("BRAIN_EMBED_DIM", "1024"))
 # e5 models expect explicit "query:" / "passage:" prefixes; auto-applied when model name starts with "intfloat/".
 _E5_FAMILY = EMBED_MODEL.startswith("intfloat/")
 DB_PATH = Path(os.environ.get("BRAIN_VECTOR_DB", str(REPO_ROOT / ".vectors.db")))
+# Persist the embedding model outside the OS temp dir — macOS purges
+# /var/folders/.../T, which silently corrupts the ~2GB onnx external-data file
+# and leaves reindex skipping vectors. Overridable via BRAIN_EMBED_CACHE or
+# fastembed's own FASTEMBED_CACHE_PATH.
+EMBED_CACHE_DIR = Path(
+    os.environ.get("BRAIN_EMBED_CACHE")
+    or os.environ.get("FASTEMBED_CACHE_PATH")
+    or (Path.home() / ".cache" / "fastembed")
+).expanduser()
 MIN_CHUNK_CHARS = 40
+# multilingual-e5-large truncates at ~512 tokens (~2 KB). Stay safely under that
+# limit so each embedded chunk carries retrievable text, not a silent prefix cut.
+MAX_CHUNK_CHARS = 1400
+# When a logical section splits into multiple sub-chunks, section_idx becomes
+# (base_idx + 1) * _SUB_IDX_SCALE + sub_idx so indices stay stable and unique.
+_SUB_IDX_SCALE = 1000
+# Overlap between sliding-window sub-chunks (chars) to avoid boundary clipping.
+_SPLIT_OVERLAP = 100
+# Header metadata is capped so a long alias/tag list cannot consume the embed budget.
+_MAX_HEADER_CHARS = MAX_CHUNK_CHARS // 4
+# Backstop: refuse to emit more sub-chunks than this per logical section.
+_MAX_SUB_CHUNKS = 512
+# Backstop: cap total chunks per note across all sections (bounds one _embed batch).
+_MAX_CHUNKS_PER_NOTE = 2048
 
 H2_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+H3_RE = re.compile(r"^###\s+", re.MULTILINE)
 
 
 @dataclass
@@ -85,7 +112,8 @@ def _db() -> sqlite3.Connection:
 def _embedder():
     from fastembed import TextEmbedding
 
-    return TextEmbedding(model_name=EMBED_MODEL)
+    EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return TextEmbedding(model_name=EMBED_MODEL, cache_dir=str(EMBED_CACHE_DIR))
 
 
 def _embed(texts: list[str], *, kind: str = "passage") -> list[list[float]]:
@@ -100,6 +128,162 @@ def _to_blob(vec: list[float]) -> bytes:
 
 
 # ---------- chunking ----------
+
+
+def _sliding_window(text: str, *, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Split *text* into fixed-size windows with overlap."""
+    overlap = min(_SPLIT_OVERLAP, max(0, limit // 4))
+    step = max(1, limit - overlap)
+    parts: list[str] = []
+    start = 0
+    while start < len(text):
+        parts.append(text[start : start + limit])
+        if start + limit >= len(text):
+            break
+        start += step
+    return parts
+
+
+def _cap_header_blob(header_blob: str) -> str:
+    """Keep header metadata within a fixed fraction of ``MAX_CHUNK_CHARS``."""
+    if len(header_blob) <= _MAX_HEADER_CHARS:
+        return header_blob
+    return header_blob[: _MAX_HEADER_CHARS - 1] + "…"
+
+
+def _split_on_pattern(text: str, pattern: re.Pattern[str]) -> list[str]:
+    """Split *text* on lines matching *pattern*, keeping the delimiter line."""
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return [text]
+    parts: list[str] = []
+    if matches[0].start() > 0:
+        parts.append(text[: matches[0].start()].strip())
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        parts.append(text[m.start() : end].strip())
+    return [p for p in parts if p]
+
+
+def _pack_paragraphs(text: str, *, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Greedy paragraph packing up to *limit* chars."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if not paragraphs:
+        return [text]
+    parts: list[str] = []
+    current = ""
+    for para in paragraphs:
+        candidate = f"{current}\n\n{para}".strip() if current else para
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                parts.append(current)
+            if len(para) <= limit:
+                current = para
+            else:
+                parts.extend(_sliding_window(para, limit=limit))
+                current = ""
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _split_oversized(text: str, *, limit: int = MAX_CHUNK_CHARS) -> list[str]:
+    """Sub-split *text* when it exceeds *limit* (H3 → paragraph → window)."""
+    if len(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    for h3_part in _split_on_pattern(text, H3_RE):
+        if len(h3_part) <= limit:
+            parts.append(h3_part)
+        else:
+            parts.extend(_pack_paragraphs(h3_part, limit=limit))
+
+    final: list[str] = []
+    for part in parts:
+        if len(part) <= limit:
+            final.append(part)
+        else:
+            final.extend(_sliding_window(part, limit=limit))
+    return final
+
+
+def _section_indices(
+    base_idx: int,
+    num_parts: int,
+    *,
+    note_id: str = "",
+    max_legacy_single: int = 0,
+) -> list[int]:
+    """Map sub-parts to stable ``section_idx`` values (respects UNIQUE per note)."""
+    prefix = f"note {note_id!r}: " if note_id else ""
+    if num_parts >= _SUB_IDX_SCALE:
+        raise RuntimeError(
+            f"{prefix}cannot split section {base_idx} into {num_parts} sub-chunks "
+            f"(limit is {_SUB_IDX_SCALE - 1})"
+        )
+    if num_parts == 1:
+        return [base_idx]
+    sub_start = (base_idx + 1) * _SUB_IDX_SCALE
+    sub_end = sub_start + num_parts - 1
+    if sub_start <= max_legacy_single:
+        raise RuntimeError(
+            f"{prefix}sub-chunk indices [{sub_start}, {sub_end}] collide with legacy "
+            f"single-chunk indices up to {max_legacy_single}"
+        )
+    return [sub_start + i for i in range(num_parts)]
+
+
+def _emit_chunks(
+    note_id: str,
+    base_idx: int,
+    heading: str,
+    header_blob: str,
+    body_text: str,
+    *,
+    max_legacy_single: int = 0,
+) -> list[Chunk]:
+    """Build one or more chunks for a logical section, sub-splitting when needed."""
+    body_text = body_text.strip()
+    header_blob = _cap_header_blob(header_blob)
+    header_prefix = f"{header_blob}\n\n"
+    full = f"{header_prefix}{body_text}".strip()
+    if len(full) < MIN_CHUNK_CHARS:
+        return []
+
+    max_body = max(MIN_CHUNK_CHARS, MAX_CHUNK_CHARS - len(header_prefix))
+    if len(full) <= MAX_CHUNK_CHARS:
+        body_parts = [body_text]
+    else:
+        body_parts = _split_oversized(body_text, limit=max_body)
+        if len(body_parts) > _MAX_SUB_CHUNKS:
+            dropped = len(body_parts) - _MAX_SUB_CHUNKS
+            logger.warning(
+                "note %r section %r: capped at %d sub-chunks; dropping %d trailing part(s)",
+                note_id,
+                heading,
+                _MAX_SUB_CHUNKS,
+                dropped,
+            )
+            body_parts = body_parts[:_MAX_SUB_CHUNKS]
+
+    indices = _section_indices(
+        base_idx,
+        len(body_parts),
+        note_id=note_id,
+        max_legacy_single=max_legacy_single,
+    )
+    return [
+        Chunk(
+            note_id=note_id,
+            section_idx=idx,
+            heading=heading,
+            content=f"{header_prefix}{part}".strip(),
+        )
+        for idx, part in zip(indices, body_parts)
+    ]
 
 
 def chunk_note(note: Note) -> list[Chunk]:
@@ -120,31 +304,51 @@ def chunk_note(note: Note) -> list[Chunk]:
     chunks: list[Chunk] = []
 
     if not matches:
-        text = f"{header_blob}\n\n{body}".strip()
-        if len(text) >= MIN_CHUNK_CHARS:
-            chunks.append(Chunk(note.id, 0, title, text))
-        return chunks
+        text = body.strip()
+        if text or header_blob:
+            chunks.extend(
+                _emit_chunks(note.id, 0, title, header_blob, text, max_legacy_single=0)
+            )
+        return _cap_note_chunks(note.id, chunks)
 
+    max_legacy = len(matches)
     preamble = body[: matches[0].start()].strip()
-    pre_text = f"{header_blob}\n\n{preamble}".strip()
-    if len(pre_text) >= MIN_CHUNK_CHARS:
-        chunks.append(Chunk(note.id, 0, title, pre_text))
+    chunks.extend(
+        _emit_chunks(
+            note.id, 0, title, header_blob, preamble, max_legacy_single=max_legacy
+        )
+    )
 
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
         section_text = body[m.start() : end].strip()
-        if len(section_text) < MIN_CHUNK_CHARS:
-            continue
         heading = m.group(1).strip()
-        chunks.append(
-            Chunk(
-                note_id=note.id,
-                section_idx=i + 1,
-                heading=heading,
-                content=f"{header_blob}\n\n{section_text}",
+        chunks.extend(
+            _emit_chunks(
+                note.id,
+                i + 1,
+                heading,
+                header_blob,
+                section_text,
+                max_legacy_single=max_legacy,
             )
         )
-    return chunks
+    return _cap_note_chunks(note.id, chunks)
+
+
+def _cap_note_chunks(note_id: str, chunks: list[Chunk]) -> list[Chunk]:
+    """Apply the per-note aggregate chunk ceiling."""
+    if len(chunks) <= _MAX_CHUNKS_PER_NOTE:
+        return chunks
+    dropped = len(chunks) - _MAX_CHUNKS_PER_NOTE
+    logger.warning(
+        "note %r: aggregate chunk cap %d exceeded (%d total); dropping %d trailing chunk(s)",
+        note_id,
+        _MAX_CHUNKS_PER_NOTE,
+        len(chunks),
+        dropped,
+    )
+    return chunks[:_MAX_CHUNKS_PER_NOTE]
 
 
 # ---------- indexing ----------
@@ -196,7 +400,8 @@ def reindex_note(note_id: str) -> dict:
                     (chunk.note_id, chunk.section_idx, chunk.heading, chunk.content, chunk.hash),
                 )
                 new_id = cur.lastrowid
-                assert new_id is not None  # AUTOINCREMENT row just inserted
+                if new_id is None:
+                    raise RuntimeError("INSERT into chunks failed to return rowid")
                 chunk_id = new_id
             conn.execute(
                 "INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)",
@@ -243,11 +448,17 @@ def reindex_all(prune: bool = True) -> dict:
     """Walk the vault and reindex every note. If prune, drop chunks for notes that no longer exist."""
     conn = _db()
     live_ids: set[str] = set()
-    totals = {"notes": 0, "embedded": 0, "deleted": 0, "chunks": 0}
+    totals: dict = {"notes": 0, "embedded": 0, "deleted": 0, "chunks": 0, "failed": []}
 
     for note in iter_notes():
         live_ids.add(note.id)
-        result = reindex_note(note.id)
+        try:
+            result = reindex_note(note.id)
+        except Exception as exc:
+            conn.rollback()
+            logger.error("reindex failed for %s: %s", note.id, exc)
+            totals["failed"].append({"note_id": note.id, "error": str(exc)})
+            continue
         totals["notes"] += 1
         totals["embedded"] += result["embedded"]
         totals["deleted"] += result["deleted"]
@@ -276,8 +487,9 @@ def search_semantic(
 ) -> list[dict]:
     conn = _db()
     qvec = _embed([query], kind="query")[0]
-    # Over-fetch when filtering, since type filter is applied after KNN.
-    fetch = k * 4 if type_filter else k
+    # Over-fetch because dedup-by-note_id shrinks the KNN row list; type filter
+    # is applied after fetch so we need headroom in both paths.
+    fetch = k * 4
     rows = conn.execute(
         """
         SELECT c.note_id, c.section_idx, c.heading, c.content, v.distance
@@ -390,7 +602,7 @@ def search_hybrid(
     query: str,
     k: int = 10,
     type_filter: str | None = None,
-    structural_weight: float = 0.1,
+    structural_weight: float = 0.3,
 ) -> list[dict]:
     """Reciprocal-rank fusion of semantic + grep, re-ranked by graph proximity.
 
@@ -474,8 +686,13 @@ def search_graph(
     Returns "the note AND its context": seeds ranked by hybrid relevance, plus the
     notes one wikilink away (outbound + backlinks), scored as ``seed_score *
     edge_factor`` and accumulated when reachable from multiple seeds. Bounded to
-    one hop, ``neighbors_per_seed`` per seed, and at most ``k`` graph neighbors
-    overall, so the result set never blows up.
+    one hop, ``neighbors_per_seed`` per seed, and at most ``k`` total results.
+
+    **Seed protection:** direct hybrid hits (seeds) are never dropped in favor of
+    graph-only neighbors. When truncating to ``k``, all seeds are kept (top ``k``
+    by score if there are more than ``k`` seeds); any remaining slots are filled
+    with the highest-scoring graph neighbors. The returned list is then ordered by
+    ``score`` descending, consistent with ``search_semantic`` / ``search_hybrid``.
 
     Each result carries ``source`` ("seed" | "graph"); graph neighbors also carry
     ``neighbor_of`` (the seed ids that pulled them in).
@@ -497,15 +714,15 @@ def search_graph(
     for seed in seeds:
         sid = seed["id"]
         contribution = seed["score"] * edge_factor
-        candidates = list(out_edges.get(sid, ())) + list(in_edges.get(sid, ()))
+        outbound = out_edges.get(sid, frozenset())
+        inbound = in_edges.get(sid, frozenset())
+        candidates = (outbound | inbound) - {sid}
 
-        picked: list[str] = []
-        for nid in candidates:
-            if nid == sid or nid in picked:
-                continue
-            picked.append(nid)
-            if len(picked) >= neighbors_per_seed:
-                break
+        def _neighbor_key(nid: str) -> tuple[int, str]:
+            degree = len(out_edges.get(nid, ())) + len(in_edges.get(nid, ()))
+            return (-degree, nid)
+
+        picked = sorted(candidates, key=_neighbor_key)[:neighbors_per_seed]
 
         for nid in picked:
             neighbor_scores[nid] = neighbor_scores.get(nid, 0.0) + contribution
@@ -533,9 +750,14 @@ def search_graph(
         )
 
     graph_items.sort(key=lambda d: d["score"], reverse=True)
-    merged = list(results.values()) + graph_items[:k]
-    merged.sort(key=lambda d: d["score"], reverse=True)
-    return merged
+    seed_list = sorted(results.values(), key=lambda d: d["score"], reverse=True)
+    if len(seed_list) > k:
+        seed_list = seed_list[:k]
+    remaining = k - len(seed_list)
+    if remaining > 0:
+        seed_list.extend(graph_items[:remaining])
+    seed_list.sort(key=lambda d: d["score"], reverse=True)
+    return seed_list
 
 
 def _snippet(content: str, limit: int = 240) -> str:
