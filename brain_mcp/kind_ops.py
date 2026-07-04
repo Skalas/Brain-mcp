@@ -48,7 +48,7 @@ def add(kind: Kind, data: dict, body: str = "") -> dict:
     if kind.klass == "living-list" and kind.default_state:
         fm_extra["state"] = kind.default_state
 
-    result = writes.create_note(kind.target_type, slug, fm_extra, body)
+    result = writes.create_note(kind.target_type, slug, fm_extra, body, folder=kind.folder)
 
     side_effects_report = _apply_side_effects(kind, slug, fm_extra)
     if side_effects_report:
@@ -67,8 +67,11 @@ def find(kind: Kind, where: dict | None = None) -> list[dict]:
     where = where or {}
     _validate_filter(kind, where, allow_state=True)
 
+    kind_folder = VAULT_PATH / kind.folder
+    scan_dirs = (kind_folder,) if kind_folder == NOTES_DIR else (kind_folder, NOTES_DIR)
+
     out: list[dict] = []
-    for note in iter_notes((NOTES_DIR,)):
+    for note in iter_notes(scan_dirs):
         if note.frontmatter.get("kind") != kind.name:
             continue
         if not _matches_filter(note, where):

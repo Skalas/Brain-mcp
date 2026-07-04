@@ -29,3 +29,20 @@ def test_parse_note_no_frontmatter(write_note):
     note = vault.parse_note(path)
     assert note.frontmatter == {}
     assert "just a body" in note.body
+
+
+def test_shelf_folders_are_active_and_searchable(write_note):
+    write_note(
+        "library/books", "shelf-graph-note",
+        {"type": "topic", "title": "Shelved Book", "aliases": ["Shelved Book"]},
+        "a very findable phrase",
+    )
+    ids = {n.id for n in vault.iter_notes()}
+    assert "shelf-graph-note" in ids
+
+    hits = {h["id"] for h in vault.search_notes("findable phrase")}
+    assert "shelf-graph-note" in hits
+
+    note = vault.find_note_by_id("shelf-graph-note")
+    assert note is not None
+    assert note.path.parent == vault.LIBRARY_BOOKS_DIR

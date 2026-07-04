@@ -42,3 +42,13 @@ def test_validate_data_missing_and_unknown():
     with pytest.raises(KindError):
         validate_data(kind, {"title": "x", "bogus": 1})  # unknown field
     validate_data(kind, {"title": "x", "project": "p"})  # ok
+
+
+def test_kind_folder_defaults_to_notes():
+    kind = load_kinds()["task"]  # no target.folder declared
+    assert kind.folder == "notes"
+
+
+def test_kind_folder_reads_target_folder():
+    kind = load_kinds()["book"]  # declares target.folder: library/books
+    assert kind.folder == "library/books"
