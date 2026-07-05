@@ -7,6 +7,7 @@ import subprocess
 
 import yaml
 
+from .kinds import load_kinds
 from .vault import (
     ARCHIVE_DIR,
     CONVERSATIONS_DIR,
@@ -248,6 +249,16 @@ def restore_note(note_id: str, note_type: str | None = None) -> dict:
         "conversation": CONVERSATIONS_DIR,
     }
     folder = folder_by_type.get(note.frontmatter.get("type", ""), NOTES_DIR)
+
+    # A structured kind (book/recipe/task/...) routes back to its own shelf
+    # folder rather than notes/, so a restored note stays alongside its kind.
+    kind_name = note.frontmatter.get("kind")
+    if kind_name:
+        kinds = load_kinds()
+        kind = kinds.get(kind_name)
+        if kind is not None:
+            folder = VAULT_PATH / kind.folder
+
     dest = folder / src.name
     if dest.exists():
         raise VaultError(
@@ -271,19 +282,23 @@ def restore_note(note_id: str, note_type: str | None = None) -> dict:
 
 
 def create_note(
-    note_type: str, slug: str, frontmatter: dict, body: str
+    note_type: str, slug: str, frontmatter: dict, body: str, folder: str = "notes"
 ) -> dict:
     if note_type not in VALID_TYPES:
         raise VaultError(
             f"type must be one of {sorted(VALID_TYPES)}, got {note_type!r}."
         )
     validate_slug(slug)
-    path = NOTES_DIR / f"{slug}.md"
-    if path.exists():
+    # A note that already exists anywhere in the active vault (e.g. it was
+    # moved to a shelf folder) must not be silently duplicated in `folder`.
+    existing = find_note_by_id(slug)
+    if existing is not None:
         raise VaultError(
             f"Note {slug!r} already exists. Use append_section instead."
         )
+    path = (VAULT_PATH / folder) / f"{slug}.md"
     assert_inside_vault(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     today = today_iso()
     fm = {

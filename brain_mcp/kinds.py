@@ -36,6 +36,7 @@ class Kind:
     description: str
     target_type: str
     slug_pattern: str
+    folder: str
     required_fields: tuple[str, ...]
     optional_fields: tuple[str, ...]
     retrieval_filters: tuple[str, ...]
@@ -84,6 +85,10 @@ def _parse_recipe(path: Path) -> Kind | None:
         raise KindError(f"{path.name}: `target` must be a mapping")
     target_type = target.get("type", "topic")
     slug_pattern = target.get("slug_pattern") or f"{name}-{{title-kebab}}"
+    folder = target.get("folder") or "notes"
+    if not isinstance(folder, str):
+        raise KindError(f"{path.name}: `target.folder` must be a string, got {folder!r}")
+    folder = folder.strip("/")
 
     fields_fm = fm.get("fields") or {}
     required = tuple(fields_fm.get("required") or ())
@@ -123,6 +128,7 @@ def _parse_recipe(path: Path) -> Kind | None:
         description=fm.get("description", ""),
         target_type=target_type,
         slug_pattern=slug_pattern,
+        folder=folder,
         required_fields=required,
         optional_fields=optional,
         retrieval_filters=filters,

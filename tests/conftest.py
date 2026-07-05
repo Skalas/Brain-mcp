@@ -17,6 +17,7 @@ _VAULT = Path(tempfile.mkdtemp(prefix="brain-test-vault-"))
 for _d in (
     "notes", "daily", "meetings", "conversations", "_archive",
     "_index", "_system/recipes", "_system/scripts",
+    "library/books", "library/recipes", "gtd/tasks", "gtd/delegated",
 ):
     (_VAULT / _d).mkdir(parents=True, exist_ok=True)
 
@@ -43,6 +44,23 @@ for _moc in ("people", "projects", "topics", "timeline", "tags", "README"):
 )
 (_VAULT / "_system" / "recipes" / "sample-workflow.md").write_text(
     "# Sample Workflow\nA multi-step procedure (no kind/class).\n", encoding="utf-8"
+)
+(_VAULT / "_system" / "recipes" / "book.md").write_text(
+    "---\n"
+    "kind: book\n"
+    "class: archive\n"
+    "description: test book\n"
+    "target:\n"
+    "  type: topic\n"
+    "  folder: library/books\n"
+    "fields:\n"
+    "  required: [title]\n"
+    "  optional: [author]\n"
+    "retrieval:\n"
+    "  filters: [author]\n"
+    "---\n"
+    "Book recipe body.\n",
+    encoding="utf-8",
 )
 
 os.environ["VAULT_PATH"] = str(_VAULT)

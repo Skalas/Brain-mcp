@@ -64,7 +64,7 @@ Kind tools carry their schema in the description — required fields, optional f
 | `create_note(type, slug, frontmatter, body)` | new untyped entity note (person/project/topic/ref) in `notes/` + reindex |
 | `create_dated(kind, slug, body, frontmatter?, date?)` | new file in `daily/`, `meetings/`, or `conversations/` + reindex |
 
-For structured entities, prefer `add_<kind>` — it enforces the recipe contract.
+For structured entities, prefer `add_<kind>` — it enforces the recipe contract and writes to the kind's `target.folder` (default `notes/`).
 
 ### Maintenance
 
@@ -84,6 +84,7 @@ description: Short human description
 target:
   type: ref                  # frontmatter type for resulting notes (person|project|topic|ref)
   slug_pattern: "book-{title-kebab}"
+  folder: library/books       # vault-relative folder for this kind's notes (default: notes)
 fields:
   required: [title, author]
   optional: [year, rating, themes]

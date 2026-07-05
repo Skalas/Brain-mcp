@@ -1,10 +1,15 @@
 """Kind operations: list-state filter regression (#19) and add flow."""
 import brain_mcp.kind_ops as ko
 from brain_mcp.kinds import load_kinds
+from brain_mcp.vault import VAULT_PATH
 
 
 def _task():
     return load_kinds()["task"]
+
+
+def _book():
+    return load_kinds()["book"]
 
 
 def test_list_items_accepts_list_state_filter(stub_reindex):
@@ -35,3 +40,21 @@ def test_add_creates_note_and_state(stub_reindex):
     assert note.frontmatter["kind"] == "task"
     assert note.frontmatter["state"] == "open"
     assert note.frontmatter["context"] == "personal"
+
+
+def test_add_writes_to_kind_target_folder(stub_reindex):
+    kind = _book()
+    assert kind.folder == "library/books"
+    res = ko.add(kind, {"title": "Dune"}, "sci-fi")
+    path = VAULT_PATH / res["path"]
+    assert path.parent == VAULT_PATH / "library" / "books"
+    assert path.exists()
+
+
+def test_find_sees_notes_in_shelf_folder_and_notes(write_note):
+    kind = _book()
+    write_note("library/books", "book-shelf", {"kind": "book", "title": "Shelf"}, "x")
+    write_note("notes", "book-legacy", {"kind": "book", "title": "Legacy"}, "x")
+    ids = {r["id"] for r in ko.find(kind)}
+    assert "book-shelf" in ids
+    assert "book-legacy" in ids

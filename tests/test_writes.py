@@ -55,6 +55,30 @@ def test_restore_note_roundtrip(stub_reindex, vault_root):
     assert vault.find_note_by_id("to-restore").frontmatter["status"] == "active"
 
 
+def test_create_note_writes_to_folder(stub_reindex, vault_root):
+    res = writes.create_note("topic", "shelved-note", {}, "body", folder="library/books")
+    assert res["path"] == "library/books/shelved-note.md"
+    assert (vault_root / "library" / "books" / "shelved-note.md").exists()
+
+
+def test_create_note_rejects_duplicate_across_folders(stub_reindex):
+    writes.create_note("topic", "dup-note", {}, "body", folder="library/books")
+    with pytest.raises(VaultError):
+        writes.create_note("topic", "dup-note", {}, "body")  # would land in notes/
+
+
+def test_restore_note_routes_by_kind_folder(stub_reindex, vault_root):
+    writes.create_note(
+        "topic", "book-to-restore", {"kind": "book", "title": "T"}, "content",
+        folder="library/books",
+    )
+    writes.archive_note("book-to-restore")
+    assert (vault_root / "_archive" / "book-to-restore.md").exists()
+    res = writes.restore_note("book-to-restore")
+    assert res["restored_to"] == "library/books/book-to-restore.md"
+    assert (vault_root / "library" / "books" / "book-to-restore.md").exists()
+
+
 def test_run_reindex_fallback_without_script(monkeypatch):
     monkeypatch.setattr(writes, "REINDEX_SCRIPT", writes.REINDEX_SCRIPT.parent / "missing.sh")
     # no note_id -> skip path, never touches the embedder

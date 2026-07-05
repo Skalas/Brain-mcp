@@ -27,8 +27,14 @@ INDEX_DIR = VAULT_PATH / "_index"
 SYSTEM_DIR = VAULT_PATH / "_system"
 ARCHIVE_DIR = VAULT_PATH / "_archive"
 
-ACTIVE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR)
-WRITABLE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR)
+LIBRARY_BOOKS_DIR = VAULT_PATH / "library" / "books"
+LIBRARY_RECIPES_DIR = VAULT_PATH / "library" / "recipes"
+GTD_TASKS_DIR = VAULT_PATH / "gtd" / "tasks"
+GTD_DELEGATED_DIR = VAULT_PATH / "gtd" / "delegated"
+SHELF_DIRS = (LIBRARY_BOOKS_DIR, LIBRARY_RECIPES_DIR, GTD_TASKS_DIR, GTD_DELEGATED_DIR)
+
+ACTIVE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR) + SHELF_DIRS
+WRITABLE_DIRS = (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR) + SHELF_DIRS
 READONLY_DIRS = (SYSTEM_DIR, INDEX_DIR, VAULT_PATH / ".obsidian")
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
@@ -96,7 +102,7 @@ def parse_note(path: Path) -> Note:
 def find_note_by_id(note_id: str) -> Note | None:
     if not SAFE_STEM_RE.match(note_id):
         return None  # reject path-traversal / separators before building a path
-    for d in (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR):
+    for d in (NOTES_DIR, DAILY_DIR, MEETINGS_DIR, CONVERSATIONS_DIR, ARCHIVE_DIR) + SHELF_DIRS:
         candidate = d / f"{note_id}.md"
         if candidate.exists():
             return parse_note(candidate)
