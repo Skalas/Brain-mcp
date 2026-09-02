@@ -17,6 +17,60 @@ uv sync
 VAULT_PATH="/Users/skalas/Documents/Obsidian Vault" uv run brain-mcp
 ```
 
+`brain-mcp` with no extra flags is still stdio. Local Cursor and Claude Desktop
+keep launching it the same way (`uv run` + `VAULT_PATH`). Tool behavior is
+unchanged.
+
+## Run (streamable HTTP, for remote clients)
+
+Same tools, served over the MCP Python SDK's streamable HTTP transport so a
+remote client (Grok Bot, Cursor cloud, or any MCP 1.x streamable-HTTP client)
+can call a live vault.
+
+```bash
+VAULT_PATH="/Users/skalas/Documents/Obsidian Vault" \
+BRAIN_MCP_TOKEN="$(openssl rand -hex 32)" \
+uv run brain-mcp --http
+```
+
+Listens on `http://127.0.0.1:8765/mcp` by default. Equivalent env form:
+
+```bash
+VAULT_PATH="…" BRAIN_MCP_TOKEN="…" BRAIN_MCP_TRANSPORT=http uv run brain-mcp
+```
+
+| Variable / flag | Purpose |
+|---|---|
+| `VAULT_PATH` | Existing vault root. Required in both modes. |
+| `BRAIN_MCP_TOKEN` | **Required in HTTP mode.** Shared bearer token. Unauthenticated requests are rejected with `401`. Never pass this on the command line; it is not logged. |
+| `--http` or `--transport http` or `BRAIN_MCP_TRANSPORT=http` | Select streamable HTTP. Default remains stdio. |
+| `--host` / `BRAIN_MCP_HOST` | Bind address (default `127.0.0.1`). Use `0.0.0.0` only if you intend to expose the port. |
+| `--port` / `BRAIN_MCP_PORT` | Bind port (default `8765`). |
+
+Clients send `Authorization: Bearer <token>` to `http://<host>:<port>/mcp`.
+
+**Cursor / Claude Desktop (local stdio)** — unchanged; see [Wire to clients](#wire-to-clients) below.
+
+**Remote streamable-HTTP client** (shape varies by product; the URL and header are what matter):
+
+```json
+{
+  "mcpServers": {
+    "brain": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer <same value as BRAIN_MCP_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+Binding `127.0.0.1` is the safe default. To reach a vault on your machine from
+a remote agent, tunnel that port (SSH, Tailscale, …) rather than opening it to
+the internet. If you do bind `--host 0.0.0.0`, put TLS and the bearer token in
+front of it; do not rely on network location alone.
+
 ## Tools exposed
 
 ### Search & read
@@ -175,13 +229,16 @@ claude mcp add brain \
 }
 ```
 
-**OpenClaw / Cursor / others**: same stdio command + `VAULT_PATH` env var. Any MCP 1.x-compatible client should work.
+**OpenClaw / Cursor / others (stdio)**: same stdio command + `VAULT_PATH` env var. Any MCP 1.x-compatible client should work.
+
+**Remote (streamable HTTP)**: run `brain-mcp --http` with `BRAIN_MCP_TOKEN` set, then point the client at `http://<host>:8765/mcp` with `Authorization: Bearer <token>`. Stdio configs above do not change.
 
 ## Architecture
 
 ```
 brain_mcp/
-├── server.py     FastMCP tool registration. Generic tools + dynamic per-kind tools.
+├── server.py     FastMCP tool registration. Generic tools + dynamic per-kind tools. Default entry is stdio.
+├── http.py       Streamable HTTP transport (SDK) + bearer auth. Used only when `--http` / `BRAIN_MCP_TRANSPORT` is set.
 ├── vault.py      Domain layer: Note parsing, path resolution, search, doctrine/workflow readers.
 ├── writes.py     Application layer: append_section, create_note, create_dated. Reindex on every write.
 ├── kinds.py      Recipe registry: parses _system/recipes/*.md into Kind objects.

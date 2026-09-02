@@ -550,7 +550,13 @@ for _kind in KINDS.values():
         _register_living_list_kind(_kind)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    from .http import parse_argv, run_http
+
+    config = parse_argv(argv)
+    if config.transport == "http":
+        run_http(config.host, config.port)
+        return
     mcp.run()
 
 
