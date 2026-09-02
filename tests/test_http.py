@@ -153,23 +153,28 @@ def test_authenticated_lists_and_calls_tool(http_server: tuple[str, str]):
 
     async def _exercise() -> None:
         from mcp.client.session import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client
 
         headers = {"Authorization": f"Bearer {token}"}
-        async with streamablehttp_client(url, headers=headers) as (read, write, _session_id):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                listed = await session.list_tools()
-                names = {tool.name for tool in listed.tools}
-                assert "list_kinds" in names
-                assert "get_doctrine" in names
-                assert "search_notes" in names
-                result = await session.call_tool("get_doctrine", {})
-                assert result.isError is False
-                text = "".join(
-                    block.text for block in result.content if getattr(block, "text", None)
-                )
-                assert "Doctrine" in text
+        async with httpx.AsyncClient(headers=headers, timeout=10) as http_client:
+            async with streamable_http_client(url, http_client=http_client) as (
+                read,
+                write,
+                _session_id,
+            ):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    names = {tool.name for tool in listed.tools}
+                    assert "list_kinds" in names
+                    assert "get_doctrine" in names
+                    assert "search_notes" in names
+                    result = await session.call_tool("get_doctrine", {})
+                    assert result.isError is False
+                    text = "".join(
+                        block.text for block in result.content if getattr(block, "text", None)
+                    )
+                    assert "Doctrine" in text
 
     anyio.run(_exercise)
 
